@@ -1,0 +1,2 @@
+# IPLDUMP.ASM is a directly transferable CP/M text file: CR/LF plus Ctrl-Z EOF.
+tools/IPLDUMP.ASM -text

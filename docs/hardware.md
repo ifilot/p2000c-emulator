@@ -1,0 +1,138 @@
+# P2000C hardware notes
+
+These notes capture the subset of the service manual that drives the current
+implementation. Page references use the manual's printed section/page numbers,
+not PDF page indices.
+
+## Architecture
+
+The P2000C contains two independent Z80 systems:
+
+- The mainboard uses a 4 MHz Z80A, 64 KiB RAM, a 4 KiB IPL ROM, an Intel 8257
+  DMA controller, a uPD765 floppy controller, SASI, two Z80 CTCs, and a Z80 SIO.
+- The terminal board uses a 3.072 MHz Z80A, an MC6845, two 16 KiB RAM banks,
+  firmware ROM, an 8251A USART, keyboard logic, and a 4 KiB character ROM.
+- The boards communicate through a serial link. The mainboard BIOS performs a
+  two-character handshake before proceeding with IPL.
+
+Sources: service manual sections 2.1/3-1 through 3-3, 3.2/1-1, and 3.3/1-1.
+
+The prototype currently emulates the serial boundary of the terminal board,
+not its second Z80. Mainboard bytes sent through SIO-B/DMA channel 3 are
+interpreted by an 80x24 high-level terminal, and keyboard bytes are returned
+through the receive side of the same SIO channel. This preserves the mainboard
+firmware interface while leaving cycle-accurate terminal-board emulation for a
+later milestone.
+
+## Mainboard memory manager
+
+After reset, reads from `0000`-`0fff` select the IPL ROM while writes still go
+to underlying RAM. Output port `1e` controls the mapping:
+
+- value `00`: IPL ROM at `0000`-`0fff`, internal RAM elsewhere;
+- value `02`: internal RAM throughout the address space.
+
+Source: service manual section 3.2/7-1 through 7-3.
+
+## Mainboard I/O map
+
+| Ports | Device |
+|---|---|
+| `00`-`08` | Intel 8257 DMA |
+| `14`-`15` | Printer 8251A USART |
+| `16`-`17` | SASI data |
+| `18`-`19` | SASI control |
+| `1a` | uPD765 main status register |
+| `1b` | uPD765 data register |
+| `1e` | Memory manager, write-only |
+| `1f` | Floppy/SASI output port, write-only |
+| `20`-`23` | CTC I |
+| `24`-`27` | CTC II |
+| `28`-`29` | Communications SIO channel |
+| `2a`-`2b` | Terminal SIO channel |
+
+Port `1f` bit 4 resets the uPD765 when low, bit 5 controls the motor, bit 6
+enables drive 4 selection, and bit 7 selects SASI instead of the floppy
+controller. The floppy controller and SASI share DMA channel 0 and CTC II
+interrupt channel 3.
+
+Sources: service manual sections 3.2/6-3 through 6-4 and 3.2/11-4 through 11-5.
+
+## Floppy boot
+
+The IPL reads cylinder 0, head 0 into address `d600`. Byte 3 determines whether
+another 4 KiB track is required: `80` means no second track, `81` loads cylinder
+1/head 0 at `e600`, and `82` loads cylinder 0/head 1 at `e600`. The supplied
+disk uses `82` and contains 80 cylinders, two heads, 16 sectors per track, and
+256 bytes per sector (655,360 decoded bytes).
+
+The disk-loaded code is not self-contained. Before transferring control, the
+IPL installs firmware driver entry points at `f606` and a driver parameter block
+referenced by `ffd0`. The supplied boot track calls these services. Authentic
+boot therefore requires the mainboard IPL ROM rather than only the disk image.
+
+The current uPD765 model implements reset, specify, sense-interrupt,
+recalibrate, seek, and read-data behavior sufficient for this supplied system
+disk to reach its CP/M 2.2 banner. Both uPD765 unit 0 and unit 1 are connected
+to independently mounted ImageDisk media as floppy drives A and B. Sector
+writes and the remaining controller commands are still pending.
+
+Sources: service manual sections 2.1/3-2 through 3-4 and 2.1/3-5 through 3-13.
+
+## Execution timing
+
+The mainboard CPU clock is 4 MHz. The integrated Z80 core accounts for
+documented T-states at instruction boundaries rather than modeling each bus
+phase. The Qt scheduler uses monotonic elapsed host time to budget four million
+T-states per second at authentic speed, retaining fractional T-states between
+ticks. Long host stalls are capped at 100 ms of catch-up to keep the interface
+responsive. User-selected speed multipliers scale the whole machine timeline;
+the emulated 60 Hz interrupt therefore also scales in wall-clock time.
+
+## Character generator
+
+The terminal character ROM contains 256 glyphs. Each character occupies 16
+bytes, of which the first 12 describe an 8x12 bitmap and the final four are
+unused. Bits are shifted least-significant first. The supplied 192x192 PNG is a
+16x16 character grid with 12x12 presentation cells and is embedded unchanged in
+the Qt application.
+
+The active alphanumeric raster is fixed at 80 columns by 24 rows, or 640 dots
+by 288 scanlines. Only the first eight columns of each 12-pixel-wide PNG sheet
+cell contain character-generator data; the other four columns are sheet
+spacing and are not part of the emulated display.
+
+Timing coordinates do not imply square physical dots on the 9-inch CRT. The Qt
+presentation uses a 7:8 horizontal-to-vertical dot pitch, calibrated from the
+6x7 lit-dot bounding box of `O` in the character data and the supplied monitor
+close-up. Contiguous dots on one scanline are rendered as a single rounded
+phosphor stroke. A narrow dark interval remains between scanlines, surrounded
+by a restrained green/cyan bloom matching the photographed display.
+
+Source: service manual sections 3.3/10-1 through 10-2 and Appendix A.
+
+## Character attributes
+
+The terminal firmware's `ESC,0,b` sequence selects an attribute byte that is
+stored alongside every subsequently written character until another attribute
+is selected. Its serial representation is different from the lower-five-bit
+layout used internally by the terminal board's attribute RAM:
+
+| Serial bit | Attribute |
+|---|---|
+| 6 | Intensity high bit |
+| 5 | Underline |
+| 4 | Inverse video |
+| 1 | Blink |
+| 0 | Intensity low bit |
+
+The intensity values `00`, `01`, `10`, and `11` mean quarter bright, bold,
+normal, and half bright respectively. Reset selects normal intensity (`40h`).
+The emulator keeps the raw attribute byte per cell, moves it with characters
+during scrolling, and applies inversion and the four brightness levels to the
+phosphor raster. Underline and blink are also interpreted; underline occupies
+the tenth character scanline and blink changes state approximately every 667
+milliseconds.
+
+Sources: service manual terminal-firmware section 2.3.2 (page 4-7) and sections
+3.3/5-3 and 3.3/9-2 through 9-3.
