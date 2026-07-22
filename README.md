@@ -6,6 +6,20 @@ a headless command-line mode for scripting and automated testing.
 
 ![Screenshot of the P2000C Emulator](screenshots/screenshot_emulator.png)
 
+## Downloads
+
+Prebuilt packages are available from the
+[latest GitHub release](https://github.com/ifilot/p2000c-emulator/releases/latest).
+Choose the package for your platform:
+
+| Operating system | Architecture | Package |
+| --- | --- | --- |
+| Windows | x86-64 | [Graphical installer (`windows-x86_64.exe`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
+| macOS | Apple silicon (arm64) | [Disk image (`macos-arm64.dmg`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
+| macOS | Intel (x86-64) | [Disk image (`macos-x86_64.dmg`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
+| Linux | x86-64 | [Portable AppImage (`linux-x86_64.AppImage`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
+| Linux | x86-64 | [Graphical installer (`linux-x86_64.run`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
+
 ## Features
 
 - Boots CP/M and runs original P2000C software
