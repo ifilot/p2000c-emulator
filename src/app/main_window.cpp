@@ -838,7 +838,8 @@ void MainWindow::create_menus() {
   volume->setObjectName("hardwareSoundVolumeAction");
   connect(volume, &QAction::triggered, this,
           &MainWindow::open_audio_volume_settings);
-  QAction* delays = settings_menu->addAction("Enable Hardware &Delays");
+  QAction* delays =
+      settings_menu->addAction("Enable Floppy Drive &Delays");
   delays->setObjectName("enableHardwareDelaysAction");
   delays->setCheckable(true);
   delays->setChecked(

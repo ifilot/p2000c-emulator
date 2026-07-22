@@ -90,6 +90,61 @@ int main(int argc, char* argv[]) {
   }
   machine.set_storage_delays_enabled(true);
 
+  // A SASI read must present status immediately even while realistic floppy
+  // delays are enabled. The tiny IPL performs a one-block DMA read and stores
+  // the control-bus state observed directly after the command at 0x1000.
+  std::array<std::uint8_t, 4096> sasi_test_ipl{};
+  constexpr std::array<std::uint8_t, 54> kSasiReadProgram = {
+      0x3e, 0x00, 0xd3, 0x00,  // DMA address low
+      0x3e, 0x20, 0xd3, 0x00,  // DMA address high
+      0x3e, 0xff, 0xd3, 0x01,  // DMA count low (512 bytes)
+      0x3e, 0x01, 0xd3, 0x01,  // DMA count high
+      0x3e, 0x01, 0xd3, 0x08,  // Enable DMA channel zero
+      0x3e, 0x04, 0xd3, 0x18,  // Select the SASI target
+      0x3e, 0x08, 0xd3, 0x16,  // READ(6)
+      0x3e, 0x00, 0xd3, 0x16,  // Unit zero and LBA high
+      0x3e, 0x00, 0xd3, 0x16,  // LBA middle
+      0x3e, 0x00, 0xd3, 0x16,  // LBA low
+      0x3e, 0x01, 0xd3, 0x16,  // One block
+      0x3e, 0x00, 0xd3, 0x16,  // Control byte
+      0xdb, 0x18,              // Read SASI control immediately
+      0x32, 0x00, 0x10,        // Store it outside the ROM overlay
+      0x76};                    // HALT
+  std::copy(kSasiReadProgram.begin(), kSasiReadProgram.end(),
+            sasi_test_ipl.begin());
+  std::uint16_t sasi_checksum = 0;
+  for (std::size_t index = 0; index < sasi_test_ipl.size() - 2; ++index) {
+    sasi_checksum =
+        static_cast<std::uint16_t>(sasi_checksum + sasi_test_ipl[index]);
+  }
+  sasi_test_ipl[sasi_test_ipl.size() - 2] =
+      static_cast<std::uint8_t>(sasi_checksum);
+  sasi_test_ipl[sasi_test_ipl.size() - 1] =
+      static_cast<std::uint8_t>(sasi_checksum >> 8);
+  p2000c::P2000cMachine immediate_sasi_machine;
+  std::string sasi_error;
+  bool saw_sasi_read = false;
+  immediate_sasi_machine.set_storage_activity_handler(
+      [&saw_sasi_read](const auto& activity) {
+        saw_sasi_read =
+            saw_sasi_read ||
+            (activity.device ==
+                 p2000c::P2000cMachine::StorageDevice::kHardDisk &&
+             activity.operation ==
+                 p2000c::P2000cMachine::StorageOperation::kRead);
+      });
+  immediate_sasi_machine.set_storage_delays_enabled(true);
+  if (!immediate_sasi_machine.load_ipl_rom(sasi_test_ipl, &sasi_error) ||
+      !immediate_sasi_machine.mount_hard_disk(0, argv[6], &sasi_error)) {
+    std::cerr << sasi_error << '\n';
+    return 1;
+  }
+  immediate_sasi_machine.run_for(20'000);
+  if (!saw_sasi_read || immediate_sasi_machine.read_memory(0x1000) != 0x9b) {
+    std::cerr << "SASI read was not completed without hardware latency.\n";
+    return 1;
+  }
+
   p2000c::Terminal graphics_terminal;
   const std::uint64_t initial_bell = graphics_terminal.bell_revision();
   graphics_terminal.receive(0x07);
@@ -341,7 +396,7 @@ int main(int argc, char* argv[]) {
     print_screen(boot_machine);
     return 1;
   }
-  const bool realistic_hard_disk_read =
+  const bool visible_hard_disk_read =
       std::any_of(storage_activity.begin(), storage_activity.end(),
                   [](const auto& activity) {
                     return activity.device == p2000c::P2000cMachine::
@@ -350,8 +405,8 @@ int main(int argc, char* argv[]) {
                                                      StorageOperation::kRead &&
                            activity.duration_ms >= 60;
                   });
-  if (!realistic_hard_disk_read) {
-    std::cerr << "SASI access did not expose its physical operation timing.\n";
+  if (!visible_hard_disk_read) {
+    std::cerr << "SASI access did not emit a visible activity event.\n";
     return 1;
   }
 

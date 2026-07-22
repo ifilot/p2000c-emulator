@@ -145,7 +145,6 @@ void P2000cMachine::reset() {
   sasi_command_.fill(0);
   sasi_command_length_ = 0;
   sasi_status_ = 0;
-  sasi_ready_cycle_ = 0;
   sio_b_register_ = 0;
   sio_b_receive_byte_ = 0;
   sio_b_receive_ready_ = false;
@@ -177,7 +176,9 @@ void P2000cMachine::begin_storage_activity(const StorageActivity& activity,
   if (storage_activity_handler_) {
     storage_activity_handler_(activity);
   }
-  if (storage_delays_enabled_ && apply_latency && activity.duration_ms > 0) {
+  if (storage_delays_enabled_ &&
+      activity.device == StorageDevice::kFloppy && apply_latency &&
+      activity.duration_ms > 0) {
     const std::uint64_t duration =
         static_cast<std::uint64_t>(activity.duration_ms) * 4'000;
     storage_busy_until_ =
@@ -330,18 +331,15 @@ void P2000cMachine::update_devices() {
     }
     timed_interrupts_.pop_front();
   }
-  if (sasi_phase_ == SasiPhase::kExecuting &&
-      total_cycles_ >= sasi_ready_cycle_) {
-    sasi_phase_ = SasiPhase::kStatus;
-  }
   if (cpu_->iff1 && !cpu_->int_pending && !interrupt_queue_.empty()) {
     z80_gen_int(cpu_.get(), interrupt_queue_.front());
     interrupt_queue_.pop_front();
   }
 }
 
-void P2000cMachine::request_interrupt(std::uint8_t vector) {
-  if ((vector == 0xd6 || vector == 0xde) &&
+void P2000cMachine::request_interrupt(std::uint8_t vector,
+                                     bool apply_floppy_latency) {
+  if (apply_floppy_latency && (vector == 0xd6 || vector == 0xde) &&
       total_cycles_ < storage_busy_until_) {
     timed_interrupts_.push_back({storage_busy_until_, vector});
     return;
@@ -399,7 +397,8 @@ void P2000cMachine::run_terminal_dma() {
   request_interrupt(0xd6);
 }
 
-bool P2000cMachine::run_floppy_dma(std::span<const std::uint8_t> data) {
+bool P2000cMachine::run_floppy_dma(std::span<const std::uint8_t> data,
+                                   bool apply_floppy_latency) {
   if ((dma_mode_ & 0x01) == 0) {
     return false;
   }
@@ -414,11 +413,12 @@ bool P2000cMachine::run_floppy_dma(std::span<const std::uint8_t> data) {
   channel.count = 0x3fff;
   dma_mode_ &= ~0x01;
   dma_status_ |= 0x01;
-  request_interrupt(0xd6);
+  request_interrupt(0xd6, apply_floppy_latency);
   return true;
 }
 
-std::optional<std::vector<std::uint8_t>> P2000cMachine::take_disk_dma() {
+std::optional<std::vector<std::uint8_t>> P2000cMachine::take_disk_dma(
+    bool apply_floppy_latency) {
   if ((dma_mode_ & 0x01) == 0) {
     return std::nullopt;
   }
@@ -432,7 +432,7 @@ std::optional<std::vector<std::uint8_t>> P2000cMachine::take_disk_dma() {
   channel.count = 0x3fff;
   dma_mode_ &= ~0x01;
   dma_status_ |= 0x01;
-  request_interrupt(0xd6);
+  request_interrupt(0xd6, apply_floppy_latency);
   return data;
 }
 
@@ -639,8 +639,6 @@ std::uint8_t P2000cMachine::read_sasi_control() const {
       return 0;
     case SasiPhase::kCommand:
       return 0x8b;  // REQ, C/D and BSY.
-    case SasiPhase::kExecuting:
-      return 0x80;  // BSY, with REQ withheld during mechanical access.
     case SasiPhase::kStatus:
       return 0x9b;  // REQ, C/D, BSY and I/O.
     case SasiPhase::kMessage:
@@ -704,14 +702,16 @@ void P2000cMachine::execute_sasi_command() {
   if (okay && opcode == 0x08) {
     begin_storage_activity(
         {StorageDevice::kHardDisk, StorageOperation::kRead, unit, 0,
-         60 + static_cast<int>(block_count)});
+         60 + static_cast<int>(block_count)},
+        false);
     const std::span<const std::uint8_t> data = disk->blocks(lba, block_count);
-    okay = !data.empty() && run_floppy_dma(data);
+    okay = !data.empty() && run_floppy_dma(data, false);
   } else if (okay && opcode == 0x0a) {
     begin_storage_activity(
         {StorageDevice::kHardDisk, StorageOperation::kWrite, unit, 0,
-         60 + static_cast<int>(block_count)});
-    std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
+         60 + static_cast<int>(block_count)},
+        false);
+    std::optional<std::vector<std::uint8_t>> data = take_disk_dma(false);
     std::string error;
     okay = data.has_value() &&
            data->size() == block_count * RawDiskImage::kSectorSize &&
@@ -721,10 +721,8 @@ void P2000cMachine::execute_sasi_command() {
   }
 
   sasi_status_ = okay ? 0 : 0x02;
-  sasi_ready_cycle_ = storage_busy_until_;
-  sasi_phase_ = total_cycles_ < sasi_ready_cycle_ ? SasiPhase::kExecuting
-                                                  : SasiPhase::kStatus;
-  request_interrupt(0xde);
+  sasi_phase_ = SasiPhase::kStatus;
+  request_interrupt(0xde, false);
 }
 
 std::uint8_t P2000cMachine::read_terminal_sio(std::uint8_t port) {

@@ -131,12 +131,12 @@ class P2000cMachine {
       storage_activity_handler_ = std::move(handler);
     }
 
-    /** Enables or bypasses physical storage latency without hiding activity. */
+    /** Enables or bypasses physical floppy latency without hiding activity. */
     void set_storage_delays_enabled(bool enabled) {
       storage_delays_enabled_ = enabled;
     }
 
-    /** Returns whether storage completion observes physical device latency. */
+    /** Returns whether floppy completion observes physical device latency. */
     bool storage_delays_enabled() const { return storage_delays_enabled_; }
 
   private:
@@ -159,8 +159,9 @@ class P2000cMachine {
     /** Advances asynchronous devices and presents pending interrupts. */
     void update_devices();
 
-    /** Adds a vectored interrupt to the mainboard daisy-chain queue. */
-    void request_interrupt(std::uint8_t vector);
+    /** Adds a vectored interrupt, optionally after current floppy latency. */
+    void request_interrupt(std::uint8_t vector,
+                           bool apply_floppy_latency = true);
 
     /** Reads an Intel 8257 register. */
     std::uint8_t read_dma(std::uint8_t port);
@@ -171,11 +172,13 @@ class P2000cMachine {
     /** Runs an enabled memory-to-terminal DMA channel. */
     void run_terminal_dma();
 
-    /** Transfers floppy data through DMA channel zero. */
-    bool run_floppy_dma(std::span<const std::uint8_t> data);
+    /** Transfers disk data through DMA channel zero. */
+    bool run_floppy_dma(std::span<const std::uint8_t> data,
+                        bool apply_floppy_latency = true);
 
     /** Copies channel-zero memory into a device-write buffer. */
-    std::optional<std::vector<std::uint8_t>> take_disk_dma();
+    std::optional<std::vector<std::uint8_t>> take_disk_dma(
+        bool apply_floppy_latency = true);
 
     /** Returns the uPD765 main-status register. */
     std::uint8_t fdc_status() const;
@@ -220,14 +223,13 @@ class P2000cMachine {
     /** Returns a mounted floppy selected by a uPD765 unit number. */
     const RawDiskImage* floppy_drive(std::uint8_t drive) const;
 
-    /** Reports an operation and inserts its physical device latency. */
+    /** Reports an operation and optionally inserts floppy-device latency. */
     void begin_storage_activity(const StorageActivity& activity,
                                 bool apply_latency = true);
 
     enum class SasiPhase {
       kBusFree,
       kCommand,
-      kExecuting,
       kStatus,
       kMessage,
     };
@@ -269,7 +271,6 @@ class P2000cMachine {
     std::uint64_t next_timer_cycle_ = kTimerPeriod;
     std::uint64_t storage_busy_until_ = 0;
     std::uint64_t fdc_ready_cycle_ = 0;
-    std::uint64_t sasi_ready_cycle_ = 0;
     StorageActivityHandler storage_activity_handler_;
     bool storage_delays_enabled_ = true;
 };

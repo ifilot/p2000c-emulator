@@ -123,8 +123,9 @@ Awesome floppy and hard-drive icons; hover an entry for the full path.
 
 Storage timing follows the supplied hardware documentation: the 300 RPM TEAC
 FD-55 model includes head-load, average rotational-latency, sector-transfer,
-and 6 ms stepping delays, while SASI operations include early hard-disk access
-latency. **Settings > Enable Hardware Sounds** controls spindle, stepper, and
+and 6 ms stepping delays. SASI hard-disk transfers complete without an added
+mechanical delay; their activity remains visible on the drive LEDs.
+**Settings > Enable Hardware Sounds** controls spindle, stepper, and
 the terminal's documented 1,300 Hz one-bit BEL beeper. The 5.25-inch spindle
 and head sounds use MAME's authentic recordings; magnetic read/write operations
 and SASI disks add no invented effects. The recordings are peak-normalized to
@@ -133,7 +134,7 @@ head movement. The spindle sound coasts down after 1.2 seconds without floppy
 activity, even when system software leaves the motor-control bit asserted.
 **Settings > Hardware Sound Volume...** sets and remembers one
 master level for floppy and beeper audio. **Settings >
-Enable Hardware Delays** independently bypasses physical access latency while
+Enable Floppy Drive Delays** independently bypasses floppy access latency while
 retaining activity lights and available sounds. OpenAL is required for audio
 output.
 

@@ -23,6 +23,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTimer>
 #include <algorithm>
@@ -425,8 +426,17 @@ int main(int argc, char* argv[]) {
   if (argc != 2) {
     return 2;
   }
-  qputenv("XDG_DATA_HOME", argv[1]);
-  qputenv("XDG_CONFIG_HOME", argv[1]);
+  const QString test_root = QString::fromLocal8Bit(argv[1]);
+  if (!QDir().mkpath(test_root)) {
+    return 1;
+  }
+  QTemporaryDir scratch_directory(QDir(test_root).filePath("run-XXXXXX"));
+  if (!scratch_directory.isValid()) {
+    return 1;
+  }
+  const QByteArray scratch_path = QFile::encodeName(scratch_directory.path());
+  qputenv("XDG_DATA_HOME", scratch_path);
+  qputenv("XDG_CONFIG_HOME", scratch_path);
   qputenv("ALSOFT_DRIVERS", "null");
   QApplication application(argc, argv);
   QApplication::setApplicationName("P2000C Emulator UI Test");
@@ -604,7 +614,8 @@ int main(int argc, char* argv[]) {
   }
 
   const QImage captured = display->capture_screenshot();
-  const QString screenshot_path = QDir(argv[1]).filePath("crt-screenshot.png");
+  const QString screenshot_path =
+      QDir(scratch_directory.path()).filePath("crt-screenshot.png");
   if (captured.isNull() || captured.size() != display->size() ||
       !captured.save(screenshot_path, "PNG") ||
       QImage(screenshot_path).size() != display->size()) {
@@ -917,7 +928,8 @@ int main(int argc, char* argv[]) {
   QStringList recent_paths;
   for (int index = 0; index < 6; ++index) {
     const QString path =
-        QDir(argv[1]).filePath(QString("recent-%1.flp").arg(index));
+        QDir(scratch_directory.path())
+            .filePath(QString("recent-%1.flp").arg(index));
     QFile::remove(path);
     if (!QFile::copy(":/images/system.flp", path) ||
         !window.mount_floppy(filesystem_path(path), 1)) {

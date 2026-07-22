@@ -189,6 +189,40 @@ if(P2000C_BUILD_APP)
     )
   endif()
   install(SCRIPT "${p2000c_deploy_script}" COMPONENT application)
+  if(WIN32)
+    set(P2000C_WINDOWS_RUNTIME_INSTALL_CODE [=[
+      file(GLOB_RECURSE p2000c_installed_libraries
+        "${CMAKE_INSTALL_PREFIX}/share/qt6/plugins/*.dll")
+      file(GET_RUNTIME_DEPENDENCIES
+        EXECUTABLES
+          "$<TARGET_FILE:p2000c>"
+        LIBRARIES ${p2000c_installed_libraries}
+        RESOLVED_DEPENDENCIES_VAR p2000c_resolved_dependencies
+        UNRESOLVED_DEPENDENCIES_VAR p2000c_unresolved_dependencies
+        DIRECTORIES
+          "$<TARGET_FILE_DIR:Qt6::Core>"
+          "$<TARGET_FILE_DIR:OpenAL::OpenAL>"
+        PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+        POST_EXCLUDE_REGEXES
+          ".*[\\\\/][Ww]indows[\\\\/][Ss]ystem32[\\\\/].*")
+      if(p2000c_unresolved_dependencies)
+        list(JOIN p2000c_unresolved_dependencies ", " unresolved_list)
+        message(FATAL_ERROR
+          "Could not resolve Windows runtime dependencies: ${unresolved_list}")
+      endif()
+      foreach(dependency IN LISTS p2000c_resolved_dependencies)
+        file(INSTALL
+          DESTINATION "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@"
+          TYPE SHARED_LIBRARY
+          FOLLOW_SYMLINK_CHAIN
+          FILES "${dependency}")
+      endforeach()
+    ]=])
+    string(CONFIGURE "${P2000C_WINDOWS_RUNTIME_INSTALL_CODE}"
+           P2000C_WINDOWS_RUNTIME_INSTALL_CODE @ONLY)
+    install(CODE "${P2000C_WINDOWS_RUNTIME_INSTALL_CODE}"
+      COMPONENT application)
+  endif()
 endif()
 
 if(BUILD_TESTING)

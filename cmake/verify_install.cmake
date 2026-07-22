@@ -38,10 +38,12 @@ elseif(PLATFORM STREQUAL "windows")
   if(REQUIRE_RUNTIME)
     require_glob("Qt Core runtime" "${INSTALL_ROOT}/bin/Qt6Core.dll")
     require_glob("Windows platform plugin"
-      "${INSTALL_ROOT}/bin/platforms/qwindows.dll")
+      "${INSTALL_ROOT}/bin/platforms/qwindows.dll"
+      "${INSTALL_ROOT}/share/qt6/plugins/platforms/qwindows.dll")
     require_glob("OpenAL runtime"
       "${INSTALL_ROOT}/bin/OpenAL32.dll"
-      "${INSTALL_ROOT}/bin/openal32.dll")
+      "${INSTALL_ROOT}/bin/openal32.dll"
+      "${INSTALL_ROOT}/bin/libopenal*.dll")
   endif()
 elseif(PLATFORM STREQUAL "linux")
   set(data_root "${INSTALL_ROOT}/share/p2000c-emulator")
