@@ -32,7 +32,7 @@ foreach(expected IN ITEMS
         "\"status\": \"ok\""
         "CLITEST"
         "\"address\": \"0x0000\""
-        "\"program_counter\"
+        "\"program_counter\""
         "\"screen\"")
   string(FIND "${cli_output}" "${expected}" found)
   if(found EQUAL -1)

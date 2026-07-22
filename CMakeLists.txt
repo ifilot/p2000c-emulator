@@ -113,7 +113,6 @@ if(P2000C_BUILD_APP)
     set(P2000C_PACKAGE_DATA_DIR
         "P2000C Emulator.app/Contents/Resources")
   else()
-    include(GNUInstallDirs)
     set(P2000C_PACKAGE_DATA_DIR
         "${CMAKE_INSTALL_DATADIR}/p2000c-emulator")
   endif()
