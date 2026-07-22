@@ -39,10 +39,10 @@ target_compile_options(p2000c_core PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-add_executable(p2000c_media_info tools/media_info.cpp)
+add_executable(p2000c_media_info tools/media_info/media_info.cpp)
 target_link_libraries(p2000c_media_info PRIVATE p2000c_core)
 
-add_executable(p2000c_cli tools/p2000c_cli.cpp)
+add_executable(p2000c_cli tools/p2000c_cli/p2000c_cli.cpp)
 target_link_libraries(p2000c_cli PRIVATE p2000c_core)
 install(TARGETS p2000c_cli
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT application
@@ -85,9 +85,10 @@ if(P2000C_BUILD_APP)
       "images/blank.hda"
       "images/chess.flp"
       "images/ipldump.flp"
+      "images/p2file.flp"
       "images/system.flp"
       "images/zork.flp"
-      "tools/IPLDUMP.BIN"
+      "tools/ipldump/IPLDUMP.BIN"
       "third_party/superzazu_z80/LICENSE"
       "LICENSE"
       "THIRD_PARTY.md"
@@ -130,8 +131,12 @@ if(P2000C_BUILD_APP)
     COMPONENT application
     FILES_MATCHING PATTERN "*.flp" PATTERN "*.hda"
   )
-  install(FILES tools/IPLDUMP.ASM tools/IPLDUMP.BIN
+  install(FILES tools/ipldump/IPLDUMP.ASM tools/ipldump/IPLDUMP.BIN
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/firmware"
+    COMPONENT application
+  )
+  install(FILES tools/p2file/P2FILE.ASM tools/p2file/README.md
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/utilities/p2file"
     COMPONENT application
   )
   install(FILES LICENSE THIRD_PARTY.md README.md
@@ -288,8 +293,15 @@ if(BUILD_TESTING)
   add_test(
     NAME ipldump_format_test
     COMMAND ${CMAKE_COMMAND}
-            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/IPLDUMP.ASM
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ipldump.cmake
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.ASM
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
+  )
+
+  add_test(
+    NAME p2file_format_test
+    COMMAND ${CMAKE_COMMAND}
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/P2FILE.ASM
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
   )
 
   add_executable(raw_disk_image_test tests/raw_disk_image_test.cpp)
@@ -306,7 +318,7 @@ if(BUILD_TESTING)
   add_test(
     NAME p2000c_machine_test
     COMMAND p2000c_machine_test
-            ${CMAKE_CURRENT_SOURCE_DIR}/tools/IPLDUMP.BIN
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
             ${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
             ${CMAKE_CURRENT_SOURCE_DIR}/images/zork.flp
             ${CMAKE_CURRENT_SOURCE_DIR}/images/chess.flp
@@ -318,10 +330,31 @@ if(BUILD_TESTING)
     NAME p2000c_cli_test
     COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:p2000c_cli>
-            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/IPLDUMP.BIN
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
             -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake
   )
+
+  add_test(
+    NAME p2file_cli_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
+            -DP2FILE_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/p2file.flp
+            -DHARD_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p2file.cmake
+  )
+
+  find_program(P2000C_BASH_EXECUTABLE bash)
+  if(P2000C_BASH_EXECUTABLE)
+    add_test(
+      NAME p2file_build_script_test
+      COMMAND ${P2000C_BASH_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/build.sh
+              ${CMAKE_CURRENT_BINARY_DIR}/p2file-minimal-test.flp
+    )
+  endif()
 
   if(P2000C_BUILD_APP)
     qt_add_executable(p2000c_app_test
@@ -352,9 +385,10 @@ if(BUILD_TESTING)
         "images/blank.hda"
         "images/chess.flp"
         "images/ipldump.flp"
+        "images/p2file.flp"
         "images/system.flp"
         "images/zork.flp"
-        "tools/IPLDUMP.BIN"
+        "tools/ipldump/IPLDUMP.BIN"
         "third_party/superzazu_z80/LICENSE"
         "LICENSE"
         "THIRD_PARTY.md"

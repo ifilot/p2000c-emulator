@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
@@ -40,6 +41,8 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <numeric>
 #include <optional>
 #include <string>
 
@@ -103,8 +106,15 @@ void apply_p2000c_theme() {
       border: 1px solid #b5a065;
       border-radius: 8px;
     }
+    QFrame#memoryActivityPanel {
+      background: #f5eac6;
+      color: #262626;
+      border: 1px solid #b5a065;
+      border-radius: 8px;
+    }
     QFrame#driveActivityPanel QLabel { color: #262626; background: transparent; }
-    QLabel#drivePanelTitle {
+    QFrame#memoryActivityPanel QLabel { color: #262626; background: transparent; }
+    QLabel#drivePanelTitle, QLabel#memoryPanelTitle {
       color: #594a2e;
       border: none;
       border-bottom: 1px solid #c7b77e;
@@ -370,6 +380,198 @@ class DrivePositionDisplay : public QWidget {
   unsigned secondary_ = 0;
 };
 
+/** A live, page-level instrument display for the 64 KiB address space. */
+class MemoryMapDisplay : public QWidget {
+ public:
+  explicit MemoryMapDisplay(QWidget* parent = nullptr) : QWidget(parent) {
+    setObjectName("memoryMapDisplay");
+    setMinimumHeight(139);
+    setMaximumHeight(139);
+    setMouseTracking(true);
+    setAccessibleName("64 KiB live memory map");
+    setToolTip("Each tile represents one 256-byte page. Hover for details.");
+  }
+
+  void set_memory_state(const std::array<std::uint16_t, 256>& write_counts,
+                        bool ipl_rom_mapped) {
+    if (write_counts_ == write_counts &&
+        ipl_rom_mapped_ == ipl_rom_mapped && has_memory_state_) {
+      return;
+    }
+    write_counts_ = write_counts;
+    ipl_rom_mapped_ = ipl_rom_mapped;
+    has_memory_state_ = true;
+    const std::size_t written = std::accumulate(
+        write_counts_.begin(), write_counts_.end(), std::size_t{0});
+    setAccessibleDescription(
+        QString("%1 bytes written since reset; %2")
+            .arg(written)
+            .arg(ipl_rom_mapped_ ? "IPL ROM mapped" : "all RAM mapped"));
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    QFont small = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    small.setPointSizeF(std::max(6.0, small.pointSizeF() - 2.0));
+    painter.setFont(small);
+    painter.setPen(QColor("#625a42"));
+    painter.drawText(QRectF(24, 0, width() - 28, 13), Qt::AlignLeft,
+                     "$0000");
+    painter.drawText(QRectF(24, 0, width() - 28, 13), Qt::AlignRight,
+                     "$FFFF");
+
+    const QRectF grid(25.5, 16.5, width() - 30.0, 80.0);
+    const qreal cell_width = grid.width() / 16.0;
+    const qreal cell_height = grid.height() / 16.0;
+    QLinearGradient well(grid.topLeft(), grid.bottomLeft());
+    well.setColorAt(0.0, QColor("#1d211e"));
+    well.setColorAt(1.0, QColor("#0e100f"));
+    painter.setPen(QPen(QColor("#77705c"), 0.8));
+    painter.setBrush(well);
+    painter.drawRoundedRect(grid.adjusted(-2, -2, 2, 2), 3.0, 3.0);
+    // The grid border is an outline only. Leaving the instrument-well brush
+    // active here would make drawRect() repaint every colored page dark.
+    painter.setBrush(Qt::NoBrush);
+
+    for (std::size_t page = 0; page < write_counts_.size(); ++page) {
+      const int row = static_cast<int>(page / 16);
+      const int column = static_cast<int>(page % 16);
+      QRectF cell(grid.left() + column * cell_width,
+                  grid.top() + row * cell_height, cell_width, cell_height);
+      cell.adjust(0.45, 0.45, -0.45, -0.45);
+
+      const bool low_page = page < 0x10;
+      const bool system_page = page >= 0xd6;
+      const qreal fill = write_counts_[page] / 256.0;
+      QColor page_color("#171a18");
+      if (low_page) {
+        page_color = ipl_rom_mapped_ ? QColor("#a6534e")
+                                     : QColor("#477a8b");
+        if (write_counts_[page] != 0) {
+          // Writes beneath a visible IPL stay red because the CPU still sees
+          // ROM. Once all RAM is mapped, low pages follow the normal amber
+          // written-RAM rule (notably for CP/M programs loaded at $0100).
+          page_color = ipl_rom_mapped_
+                           ? density_color(QColor("#bd625b"),
+                                           QColor("#ef8b81"), fill)
+                           : density_color(QColor("#d3a33d"),
+                                           QColor("#f2c14e"), fill);
+        }
+      } else if (system_page) {
+        page_color = QColor("#a96aa0");
+        if (write_counts_[page] != 0) {
+          page_color = density_color(QColor("#bd78b3"),
+                                     QColor("#eba6df"), fill);
+        }
+      } else if (write_counts_[page] != 0) {
+        page_color = density_color(QColor("#d3a33d"),
+                                   QColor("#f2c14e"), fill);
+      }
+      painter.fillRect(cell, page_color);
+      painter.setPen(QPen(QColor(5, 7, 6, 135), 0.40));
+      painter.drawRect(cell);
+
+    }
+
+    painter.setFont(small);
+    painter.setPen(QColor("#766b4c"));
+    for (int row : {0, 4, 8, 12}) {
+      painter.drawText(QRectF(0, grid.top() + row * cell_height - 3,
+                              22, cell_height + 6),
+                       Qt::AlignRight | Qt::AlignVCenter,
+                       QString("%1K").arg(row * 4));
+    }
+
+    const std::size_t written = std::accumulate(
+        write_counts_.begin(), write_counts_.end(), std::size_t{0});
+    QFont readout = small;
+    readout.setBold(true);
+    painter.setFont(readout);
+    painter.setPen(QColor("#4b3f2a"));
+    painter.drawText(QRectF(1, 103, width() - 2, 14), Qt::AlignLeft,
+                     QString("WRITTEN  %1 KiB").arg(written / 1024.0, 0, 'f', 1));
+    painter.drawText(QRectF(1, 103, width() - 2, 14), Qt::AlignRight,
+                     ipl_rom_mapped_ ? "IPL OVERLAY" : "ALL RAM");
+
+    painter.setFont(small);
+    draw_legend(&painter, 2, 126, QColor("#171a18"), "UNTOUCHED");
+    draw_legend(&painter, width() / 2 - 30, 126, QColor("#f2c14e"),
+                "WRITTEN");
+    draw_legend(&painter, width() - 58, 126, QColor("#a96aa0"), "SYSTEM");
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    const QRectF grid(25.5, 16.5, width() - 30.0, 80.0);
+    if (!grid.contains(event->position())) {
+      setToolTip("Each tile represents one 256-byte page. Hover for details.");
+      QWidget::mouseMoveEvent(event);
+      return;
+    }
+    const int column = std::clamp(
+        static_cast<int>((event->position().x() - grid.left()) /
+                         (grid.width() / 16.0)),
+        0, 15);
+    const int row = std::clamp(
+        static_cast<int>((event->position().y() - grid.top()) /
+                         (grid.height() / 16.0)),
+        0, 15);
+    const std::size_t page = static_cast<std::size_t>(row * 16 + column);
+    const std::uint16_t first = static_cast<std::uint16_t>(page << 8);
+    const std::uint16_t last = static_cast<std::uint16_t>(first | 0x00ff);
+    setToolTip(QString("%1–%2 · %3 of 256 bytes written\n%4")
+                   .arg(hex_address(first), hex_address(last))
+                   .arg(write_counts_[page])
+                   .arg(region_name(page)));
+    QWidget::mouseMoveEvent(event);
+  }
+
+ private:
+  static QColor density_color(const QColor& sparse, const QColor& dense,
+                              qreal fill) {
+    const qreal amount = std::sqrt(std::clamp(fill, 0.0, 1.0));
+    return QColor::fromRgbF(
+        sparse.redF() + (dense.redF() - sparse.redF()) * amount,
+        sparse.greenF() + (dense.greenF() - sparse.greenF()) * amount,
+        sparse.blueF() + (dense.blueF() - sparse.blueF()) * amount);
+  }
+
+  static QString hex_address(std::uint16_t address) {
+    return QString("$%1").arg(address, 4, 16, QChar('0')).toUpper();
+  }
+
+  QString region_name(std::size_t page) const {
+    if (page < 0x10) {
+      return ipl_rom_mapped_ ? "IPL ROM overlay (writes reach low RAM)"
+                             : "Low RAM / CP/M resident area";
+    }
+    if (page >= 0xf6) {
+      return "IPL services and mainboard workspace";
+    }
+    if (page >= 0xd6) {
+      return "CP/M boot-track image";
+    }
+    return "General RAM / transient program area";
+  }
+
+  static void draw_legend(QPainter* painter, int x, int y,
+                          const QColor& color, const QString& text) {
+    painter->setPen(QPen(QColor("#5d5848"), 1.0));
+    painter->setBrush(color);
+    painter->drawRoundedRect(QRectF(x, y + 1, 8, 8), 1.0, 1.0);
+    painter->setPen(QColor("#625a42"));
+    painter->drawText(QRectF(x + 11, y - 2, 65, 13),
+                      Qt::AlignLeft | Qt::AlignVCenter, text);
+  }
+
+  std::array<std::uint16_t, 256> write_counts_{};
+  bool ipl_rom_mapped_ = true;
+  bool has_memory_state_ = false;
+};
+
 namespace {
 
 struct DisplayResolution {
@@ -578,7 +780,34 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   panel_title->setFont(panel_font);
   panel_title->setAlignment(Qt::AlignCenter);
   drive_panel_layout_->addWidget(panel_title);
-  central_layout->addWidget(drive_panel, 0, Qt::AlignTop);
+
+  auto* memory_panel = new QFrame(central);
+  memory_panel->setObjectName("memoryActivityPanel");
+  memory_panel->setFrameShape(QFrame::StyledPanel);
+  memory_panel->setMinimumWidth(260);
+  memory_panel->setMaximumWidth(290);
+  auto* memory_layout = new QVBoxLayout(memory_panel);
+  memory_layout->setContentsMargins(12, 10, 12, 9);
+  memory_layout->setSpacing(6);
+  auto* memory_title = new QLabel("MEMORY · 64 KiB", memory_panel);
+  memory_title->setObjectName("memoryPanelTitle");
+  memory_title->setFont(panel_font);
+  memory_title->setAlignment(Qt::AlignCenter);
+  memory_layout->addWidget(memory_title);
+  memory_map_display_ = new MemoryMapDisplay(memory_panel);
+  memory_layout->addWidget(memory_map_display_);
+
+  auto* side_column = new QWidget(central);
+  side_column->setObjectName("statusPanelColumn");
+  side_column->setMinimumWidth(260);
+  side_column->setMaximumWidth(290);
+  auto* side_layout = new QVBoxLayout(side_column);
+  side_layout->setContentsMargins(0, 0, 0, 0);
+  side_layout->setSpacing(8);
+  side_layout->addWidget(drive_panel);
+  side_layout->addWidget(memory_panel);
+  side_layout->addStretch(1);
+  central_layout->addWidget(side_column, 0, Qt::AlignTop);
   setCentralWidget(central);
   display_->set_key_handler(
       [this](std::uint8_t value) { machine_.queue_key(value); });
@@ -613,7 +842,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       });
   refresh_media_indicators();
 
-  QFile bundled_rom(":/tools/IPLDUMP.BIN");
+  QFile bundled_rom(":/tools/ipldump/IPLDUMP.BIN");
   if (bundled_rom.open(QIODevice::ReadOnly)) {
     const QByteArray bytes = bundled_rom.readAll();
     std::string error;
@@ -631,8 +860,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   timer_->setTimerType(Qt::PreciseTimer);
   connect(timer_, &QTimer::timeout, this, &MainWindow::run_emulation_slice);
   execution_timer_.start();
+  memory_panel_timer_.start();
   timer_->start(10);
   refresh_screen();
+  refresh_memory_panel();
 }
 
 MainWindow::~MainWindow() = default;
@@ -810,6 +1041,7 @@ void MainWindow::create_menus() {
     execution_timer_.restart();
     refresh_media_indicators();
     refresh_screen();
+    refresh_memory_panel();
   });
   QMenu* speed_menu = machine_menu->addMenu("Emulation &Speed");
   auto* speed_group = new QActionGroup(this);
@@ -902,6 +1134,15 @@ void MainWindow::create_menus() {
     bundled_ipldump_actions_[drive] = ipldump_floppy;
     connect(ipldump_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_ipldump_floppy(drive); });
+
+    QAction* p2file_floppy =
+        drive_menu->addAction("Use &P2FILE Development Floppy");
+    p2file_floppy->setObjectName(
+        QString("mountP2FileFloppy%1Action").arg(drive_letter));
+    p2file_floppy->setCheckable(true);
+    bundled_p2file_actions_[drive] = p2file_floppy;
+    connect(p2file_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_p2file_floppy(drive); });
 
     QAction* blank_floppy =
         drive_menu->addAction("Use &Blank 640 KiB Data Floppy");
@@ -1245,6 +1486,17 @@ void MainWindow::refresh_drive_position(bool hard_disk, std::size_t drive) {
   }
 }
 
+void MainWindow::refresh_memory_panel() {
+  if (memory_map_display_ == nullptr) {
+    return;
+  }
+  memory_map_display_->set_memory_state(
+      machine_.memory_page_write_counts(), machine_.ipl_rom_mapped());
+  if (memory_panel_timer_.isValid()) {
+    memory_panel_timer_.restart();
+  }
+}
+
 void MainWindow::refresh_media_indicators() {
   for (std::size_t drive = 0; drive < 2; ++drive) {
     const QChar drive_letter = drive == 0 ? 'A' : 'B';
@@ -1266,6 +1518,7 @@ void MainWindow::refresh_media_indicators() {
       bundled_zork_actions_[drive]->setChecked(false);
       bundled_chess_actions_[drive]->setChecked(false);
       bundled_ipldump_actions_[drive]->setChecked(false);
+      bundled_p2file_actions_[drive]->setChecked(false);
       bundled_blank_actions_[drive]->setChecked(false);
       continue;
     }
@@ -1296,6 +1549,7 @@ void MainWindow::refresh_media_indicators() {
     const QString& zork_path = bundled_zork_paths_[drive];
     const QString& chess_path = bundled_chess_paths_[drive];
     const QString& ipldump_path = bundled_ipldump_paths_[drive];
+    const QString& p2file_path = bundled_p2file_paths_[drive];
     const QString& blank_path = bundled_blank_paths_[drive];
     bundled_system_actions_[drive]->setChecked(
         !system_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
@@ -1309,6 +1563,9 @@ void MainWindow::refresh_media_indicators() {
     bundled_ipldump_actions_[drive]->setChecked(
         !ipldump_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(ipldump_path).absoluteFilePath());
+    bundled_p2file_actions_[drive]->setChecked(
+        !p2file_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(p2file_path).absoluteFilePath());
     bundled_blank_actions_[drive]->setChecked(
         QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(blank_path).absoluteFilePath());
@@ -1452,6 +1709,27 @@ void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
     refresh_media_indicators();
     statusBar()->showMessage(
         QString("IPL dump toolchain floppy mounted in drive %1.")
+            .arg(drive_letter));
+  }
+}
+
+void MainWindow::mount_bundled_p2file_floppy(std::size_t drive) {
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/p2file.flp", media_session_.path(),
+      QString("p2file_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare P2FILE floppy", error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_p2file_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("P2FILE development floppy mounted in drive %1.")
             .arg(drive_letter));
   }
 }
@@ -1737,6 +2015,10 @@ void MainWindow::run_emulation_slice() {
     display_->set_cursor(machine_.terminal().cursor_column(),
                          machine_.terminal().cursor_row(),
                          machine_.terminal().cursor_visible());
+  }
+  if (!memory_panel_timer_.isValid() ||
+      memory_panel_timer_.elapsed() >= 100) {
+    refresh_memory_panel();
   }
 }
 

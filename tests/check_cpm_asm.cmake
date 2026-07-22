@@ -4,18 +4,23 @@ endif()
 
 file(READ "${INPUT}" source_hex HEX)
 string(TOLOWER "${source_hex}" source_hex)
+get_filename_component(source_name "${INPUT}" NAME)
 
 if(NOT source_hex MATCHES "1a$")
-  message(FATAL_ERROR "IPLDUMP.ASM does not end with the CP/M 1AH marker")
+  message(FATAL_ERROR "${source_name} does not end with the CP/M 1AH marker")
+endif()
+string(REGEX REPLACE "1a$" "" source_body_hex "${source_hex}")
+if(source_body_hex MATCHES "1a")
+  message(FATAL_ERROR "${source_name} contains an early CP/M 1AH marker")
 endif()
 
 string(REGEX REPLACE "0d0a" "" without_crlf "${source_hex}")
 if(without_crlf MATCHES "0a" OR without_crlf MATCHES "0d")
-  message(FATAL_ERROR "IPLDUMP.ASM contains a non-CP/M line ending")
+  message(FATAL_ERROR "${source_name} contains a non-CP/M line ending")
 endif()
 
 if(source_hex MATCHES "^efbbbf")
-  message(FATAL_ERROR "IPLDUMP.ASM must not contain a Unicode byte-order mark")
+  message(FATAL_ERROR "${source_name} must not contain a Unicode byte-order mark")
 endif()
 
 # Keep every source line within columns 1-79. This is deliberately stricter
@@ -27,7 +32,7 @@ foreach(source_line IN LISTS source_lines)
   string(LENGTH "${source_line}" line_length)
   if(line_length GREATER 79)
     message(FATAL_ERROR
-      "IPLDUMP.ASM line ${line_number} uses ${line_length} columns")
+      "${source_name} line ${line_number} uses ${line_length} columns")
   endif()
 endforeach()
 
@@ -41,6 +46,6 @@ foreach(line_hex IN LISTS source_lines_hex)
   math(EXPR line_length "${hex_length} / 2")
   if(line_length GREATER 79)
     message(FATAL_ERROR
-            "IPLDUMP.ASM line ${line_number} is ${line_length} columns wide")
+            "${source_name} line ${line_number} is ${line_length} columns wide")
   endif()
 endforeach()

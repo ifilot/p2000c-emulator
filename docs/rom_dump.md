@@ -1,6 +1,7 @@
 # Dumping the P2000C mainboard IPL ROM
 
-[`tools/IPLDUMP.ASM`](../tools/IPLDUMP.ASM) is written for the standard Digital
+[`tools/ipldump/IPLDUMP.ASM`](../tools/ipldump/IPLDUMP.ASM) is written for the
+standard Digital
 Research CP/M `ASM.COM` assembler. It uses only Intel 8080 mnemonics.
 
 ## Prepare the floppy

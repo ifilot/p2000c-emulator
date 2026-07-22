@@ -63,7 +63,7 @@ prompt, type commands, and inspect the resulting screen and memory:
 
 ```sh
 ./build/p2000c_cli \
-  --ipl tools/IPLDUMP.BIN \
+  --ipl tools/ipldump/IPLDUMP.BIN \
   --floppy-a images/system.flp \
   --floppy-b images/zork.flp \
   --wait-for 'A>' \
@@ -90,6 +90,14 @@ The CLI and its core can be built without Qt or OpenAL:
 cmake -S . -B build-headless -DP2000C_BUILD_APP=OFF
 cmake --build build-headless --target p2000c_cli
 ```
+
+### CP/M utilities
+
+Each utility has its own directory under `tools/`. `tools/p2file` contains the
+pure-assembly P2FILE two-panel file manager and its usage instructions. The
+compiled `images/p2file.flp` disk contains P2FILE, its assembly source and build
+outputs, `ASM.COM`, and `LOAD.COM`. Recreate it with
+`./tools/p2file/build.sh`.
 
 ## License
 

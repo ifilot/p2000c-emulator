@@ -24,6 +24,7 @@ class DisplayWidget;
 class DriveLed;
 class DrivePositionDisplay;
 class HardwareAudio;
+class MemoryMapDisplay;
 
 /** Main window for the minimal Qt P2000C emulator shell. */
 class MainWindow : public QMainWindow {
@@ -77,6 +78,9 @@ class MainWindow : public QMainWindow {
     /** Refreshes one live floppy-track or hard-disk-block readout. */
     void refresh_drive_position(bool hard_disk, std::size_t drive);
 
+    /** Refreshes the live 64 KiB RAM-page visualization. */
+    void refresh_memory_panel();
+
     /** Mounts a disposable copy of the pristine CP/M system template. */
     void mount_bundled_system_floppy(std::size_t drive);
 
@@ -88,6 +92,9 @@ class MainWindow : public QMainWindow {
 
     /** Mounts the bundled ASM/LOAD/IPLDUMP development floppy. */
     void mount_bundled_ipldump_floppy(std::size_t drive);
+
+    /** Mounts the bundled compiled P2FILE development floppy. */
+    void mount_bundled_p2file_floppy(std::size_t drive);
 
     /** Mounts a disposable blank 640 KiB data floppy. */
     void mount_bundled_blank_floppy(std::size_t drive);
@@ -128,6 +135,7 @@ class MainWindow : public QMainWindow {
     std::array<QAction*, 2> bundled_zork_actions_{};
     std::array<QAction*, 2> bundled_chess_actions_{};
     std::array<QAction*, 2> bundled_ipldump_actions_{};
+    std::array<QAction*, 2> bundled_p2file_actions_{};
     std::array<QAction*, 2> bundled_blank_actions_{};
     std::array<QAction*, 2> save_floppy_actions_{};
     std::array<QMenu*, 2> recent_floppy_menus_{};
@@ -135,6 +143,7 @@ class MainWindow : public QMainWindow {
     std::array<QString, 2> bundled_zork_paths_{};
     std::array<QString, 2> bundled_chess_paths_{};
     std::array<QString, 2> bundled_ipldump_paths_{};
+    std::array<QString, 2> bundled_p2file_paths_{};
     std::array<QString, 2> bundled_blank_paths_{};
     std::array<QLabel*, 2> media_status_labels_{};
     std::array<DrivePositionDisplay*, 2> floppy_position_displays_{};
@@ -150,10 +159,12 @@ class MainWindow : public QMainWindow {
     std::array<QString, 2> temporary_floppy_paths_{};
     std::array<QString, 2> temporary_hard_disk_paths_{};
     QVBoxLayout* drive_panel_layout_ = nullptr;
+    MemoryMapDisplay* memory_map_display_ = nullptr;
     QTemporaryDir media_session_;
     std::unique_ptr<HardwareAudio> hardware_audio_;
     bool audio_enabled_ = true;
     QElapsedTimer execution_timer_;
+    QElapsedTimer memory_panel_timer_;
     double pending_t_states_ = 0.0;
     double speed_multiplier_ = 1.0;
     std::uint64_t terminal_revision_ = 0;

@@ -236,8 +236,12 @@ int main(int argc, char* argv[]) {
   }
   machine.write_memory(0x0000, 0x5a);
   machine.write_memory(0x1234, 0xa5);
+  machine.write_memory(0x1234, 0xa5);
   if (machine.read_memory(0x0000) != 0x00 ||
-      machine.read_memory(0x1234) != 0xa5) {
+      machine.read_memory(0x1234) != 0xa5 ||
+      machine.memory_page_write_counts()[0x00] != 1 ||
+      machine.memory_page_write_counts()[0x12] != 1 ||
+      !machine.ipl_rom_mapped()) {
     return 1;
   }
 

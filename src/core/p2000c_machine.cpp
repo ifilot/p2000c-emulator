@@ -125,6 +125,8 @@ void P2000cMachine::reset() {
   cpu_->port_out = &P2000cMachine::cpu_port_out;
   cpu_->userdata = this;
   memory_manager_ = 0;
+  memory_written_.reset();
+  memory_page_write_counts_.fill(0);
   terminal_.reset();
   dma_channels_.fill({});
   interrupt_queue_.clear();
@@ -204,6 +206,10 @@ std::uint8_t P2000cMachine::read_memory(std::uint16_t address) const {
 
 void P2000cMachine::write_memory(std::uint16_t address, std::uint8_t value) {
   ram_[address] = value;
+  if (!memory_written_.test(address)) {
+    memory_written_.set(address);
+    ++memory_page_write_counts_[address >> 8];
+  }
 }
 
 std::uint8_t P2000cMachine::cpu_read(void* context, std::uint16_t address) {

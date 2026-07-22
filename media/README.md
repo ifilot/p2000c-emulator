@@ -1,6 +1,7 @@
 # Bundled CP/M media sources
 
-This directory contains the inputs used by `tools/build_media.py`; the runtime
+This directory contains the inputs used by `tools/build_media/build_media.py`;
+the runtime
 images are generated under `images/`.
 
 `files/core` and `files/zork` come from
@@ -26,7 +27,13 @@ The resulting system-track SHA-256 is
 `878ffd34cd8a94c404ae402744ed6fde8d2de2607455e853081c411bbc427820`.
 
 `images/ipldump.flp` is a non-bootable development disk containing the archived
-`ASM.COM` and `LOAD.COM` together with the repository's `tools/IPLDUMP.ASM`.
+`ASM.COM` and `LOAD.COM` together with the repository's
+`tools/ipldump/IPLDUMP.ASM`.
+
+`images/p2file.flp` is built by `tools/p2file/build.sh`. It is a non-bootable,
+minimal development disk containing `ASM.COM`, `LOAD.COM`, `P2FILE.ASM`, and
+the generated `P2FILE.PRN`, `P2FILE.HEX`, and `P2FILE.COM`. The build runs the
+assembler and loader inside the emulator rather than using a host assembler.
 
 Generated image hashes:
 
@@ -38,6 +45,8 @@ Generated image hashes:
   `ddc322f87aac4fe90234e73902ede8ee2d30ade4baafe8c50423a9a380fbd56b`
 - `images/ipldump.flp` (655,360 bytes):
   `7e0db1e195721c663864e25731e6ed552bb4449322843b8e00bf3eaee4f45770`
+- `images/p2file.flp` (655,360 bytes):
+  `2d16afd56a0f8a42fb0227ffbe73ffb41a7d7b02383b037b92c855bdcbb3cf3f`
 - `images/blank.hda` (10,485,760 bytes):
   `723d9bfe581069161b9b96396a3e990c93325ce6e277280be9abec27731f5d8a`
 

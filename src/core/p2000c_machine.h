@@ -2,6 +2,7 @@
 #define P2000C_CORE_P2000C_MACHINE_H_
 
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -141,6 +142,14 @@ class P2000cMachine {
     /** Writes a byte to mainboard RAM, including underneath the ROM overlay. */
     void write_memory(std::uint16_t address, std::uint8_t value);
 
+    /** Returns distinct bytes written in each 256-byte page since reset. */
+    const std::array<std::uint16_t, 256>& memory_page_write_counts() const {
+      return memory_page_write_counts_;
+    }
+
+    /** Returns whether the 4 KiB IPL ROM currently covers low RAM. */
+    bool ipl_rom_mapped() const { return memory_manager_ == 0; }
+
     /** Installs a callback for physical drive activity and presentation. */
     void set_storage_activity_handler(StorageActivityHandler handler) {
       storage_activity_handler_ = std::move(handler);
@@ -251,6 +260,8 @@ class P2000cMachine {
 
     std::array<std::uint8_t, kMemorySize> ram_{};
     std::array<std::uint8_t, kIplRomSize> ipl_rom_{};
+    std::bitset<kMemorySize> memory_written_{};
+    std::array<std::uint16_t, 256> memory_page_write_counts_{};
     std::unique_ptr<z80> cpu_;
     std::array<std::optional<RawDiskImage>, 2> floppy_drives_;
     std::array<std::optional<RawDiskImage>, 2> hard_disks_;

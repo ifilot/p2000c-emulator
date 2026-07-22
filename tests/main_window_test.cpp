@@ -786,6 +786,9 @@ int main(int argc, char* argv[]) {
       window.findChild<QWidget*>("floppyDriveAPosition");
   auto* drive_a_menu = window.findChild<QMenu*>("floppyDriveAMenu");
   auto* drive_panel = window.findChild<QWidget*>("driveActivityPanel");
+  auto* memory_panel = window.findChild<QFrame*>("memoryActivityPanel");
+  auto* memory_map = window.findChild<QWidget*>("memoryMapDisplay");
+  auto* status_column = window.findChild<QWidget*>("statusPanelColumn");
   auto* drive_a_led = window.findChild<QWidget*>("floppyDriveAActivityLed");
   auto* drive_a_icon = window.findChild<QLabel*>("floppyDriveATypeIcon");
   auto* drive_a_card = window.findChild<QFrame*>("floppyDriveACard");
@@ -795,6 +798,20 @@ int main(int argc, char* argv[]) {
   if (drive_a_led != nullptr) {
     drive_a_led->render(&idle_led);
   }
+  QImage memory_preview(memory_map != nullptr ? memory_map->size() : QSize(),
+                        QImage::Format_ARGB32_Premultiplied);
+  memory_preview.fill(Qt::transparent);
+  if (memory_map != nullptr) {
+    memory_map->render(&memory_preview);
+  }
+  const auto memory_page_color = [&memory_preview](int page) {
+    const int row = page / 16;
+    const int column = page % 16;
+    const qreal grid_width = memory_preview.width() - 30.0;
+    return memory_preview.pixelColor(
+        qRound(25.5 + (column + 0.5) * grid_width / 16.0),
+        qRound(16.5 + (row + 0.5) * 5.0));
+  };
   QLayoutItem* drive_a_text_item =
       drive_a_card != nullptr && drive_a_card->layout() != nullptr
           ? drive_a_card->layout()->itemAt(2)
@@ -804,6 +821,8 @@ int main(int argc, char* argv[]) {
       drive_a_menu != nullptr && drive_a_current != nullptr &&
       drive_panel != nullptr && drive_a_led != nullptr &&
       drive_a_icon != nullptr && drive_a_card != nullptr &&
+      memory_panel != nullptr && memory_map != nullptr &&
+      status_column != nullptr &&
       drive_a_text_item != nullptr && drive_a_text_item->layout() != nullptr;
   const bool drive_a_structure_valid =
       drive_a_widgets_valid && !drive_a_icon->pixmap().isNull() &&
@@ -814,6 +833,11 @@ int main(int argc, char* argv[]) {
       drive_a_icon->pixmap().size() == QSize(58, 58) &&
       drive_a_icon->accessibleName().contains("hardware illustration") &&
       drive_a_status->property("mediaFilename").toBool() &&
+      memory_map->accessibleName() == "64 KiB live memory map" &&
+      memory_map->accessibleDescription().contains("bytes written since reset") &&
+      !memory_map->accessibleDescription().contains("program counter") &&
+      memory_map->toolTip().contains("256-byte page") &&
+      memory_panel->geometry().top() > drive_panel->geometry().top() &&
       window.findChild<QWidget*>("floppyDriveASource") == nullptr;
   const bool drive_a_layout_valid =
       drive_a_widgets_valid &&
@@ -831,12 +855,25 @@ int main(int argc, char* argv[]) {
   const bool idle_led_fill_valid =
       !idle_led.isNull() &&
       idle_led.pixelColor(12, 12) != idle_led.pixelColor(0, 0);
+  const QColor low_memory_color =
+      memory_preview.isNull() ? QColor() : memory_page_color(0x00);
+  const QColor untouched_memory_color =
+      memory_preview.isNull() ? QColor() : memory_page_color(0x80);
+  const QColor system_memory_color =
+      memory_preview.isNull() ? QColor() : memory_page_color(0xd6);
+  const bool memory_map_contrast_valid =
+      low_memory_color.red() > low_memory_color.green() + 20 &&
+      qGray(untouched_memory_color.rgb()) < 60 &&
+      system_memory_color.red() > system_memory_color.green() + 20 &&
+      system_memory_color.blue() > system_memory_color.green() + 15;
   const bool drive_a_style_valid =
       system_fixed_font_valid &&
       window.palette().color(QPalette::Window) == QColor("#e8dcb3") &&
       qApp->styleSheet().contains(
           "QFrame#driveActivityPanel {\n      background: #f5eac6;") &&
-      idle_led_highlight_valid && idle_led_fill_valid;
+      qApp->styleSheet().contains("QFrame#memoryActivityPanel {") &&
+      idle_led_highlight_valid && idle_led_fill_valid &&
+      memory_map_contrast_valid;
   const bool drive_a_media_valid =
       drive_a_widgets_valid &&
       drive_a_status->text() == "system_drive_a.flp *" &&
@@ -862,10 +899,13 @@ int main(int argc, char* argv[]) {
                      "QFrame#driveActivityPanel {\n      background: #f5eac6;")
               << ", led-highlight=" << idle_led_highlight_valid
               << ", led-fill=" << idle_led_fill_valid
+              << ", memory-contrast=" << memory_map_contrast_valid
               << ".\n";
     return 1;
   }
   drive_panel->grab().save(QDir(test_root).filePath("drive-panel-preview.png"));
+  status_column->grab().save(
+      QDir(test_root).filePath("status-panels-preview.png"));
   QFile system_master(":/images/system.flp");
   QFile system_session(system_path);
   if (!system_master.open(QIODevice::ReadOnly) ||
@@ -898,7 +938,10 @@ int main(int argc, char* argv[]) {
   QAction* chess = find_named_action(&window, "mountChessFloppyBAction");
   QAction* ipldump =
       find_named_action(&window, "mountIplDumpFloppyBAction");
-  if (zork == nullptr || chess == nullptr || ipldump == nullptr) {
+  QAction* p2file =
+      find_named_action(&window, "mountP2FileFloppyBAction");
+  if (zork == nullptr || chess == nullptr || ipldump == nullptr ||
+      p2file == nullptr) {
     return 1;
   }
   zork->trigger();
@@ -928,6 +971,15 @@ int main(int argc, char* argv[]) {
                       p2000c::RawDiskImage::Kind::kFloppy) ||
       !ipldump->isChecked()) {
     std::cerr << "Bundled IPL dump toolchain did not mount as raw media.\n";
+    return 1;
+  }
+  p2file->trigger();
+  const QString p2file_path = drive_b_current->statusTip();
+  if (p2file_path.isEmpty() ||
+      !validate_image(p2file_path,
+                      p2000c::RawDiskImage::Kind::kFloppy) ||
+      !p2file->isChecked() || ipldump->isChecked()) {
+    std::cerr << "Bundled P2FILE development floppy did not mount.\n";
     return 1;
   }
 
