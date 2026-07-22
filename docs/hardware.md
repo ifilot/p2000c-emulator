@@ -19,10 +19,10 @@ Sources: service manual sections 2.1/3-1 through 3-3, 3.2/1-1, and 3.3/1-1.
 
 The prototype currently emulates the serial boundary of the terminal board,
 not its second Z80. Mainboard bytes sent through SIO-B/DMA channel 3 are
-interpreted by an 80x24 high-level terminal, and keyboard bytes are returned
-through the receive side of the same SIO channel. This preserves the mainboard
-firmware interface while leaving cycle-accurate terminal-board emulation for a
-later milestone.
+interpreted by a high-level terminal, and keyboard bytes are returned through
+the receive side of the same SIO channel. This preserves the mainboard firmware
+interface—including its character and graphics commands—while leaving
+cycle-accurate terminal-board emulation for a later milestone.
 
 ## Mainboard memory manager
 
@@ -136,3 +136,39 @@ milliseconds.
 
 Sources: service manual terminal-firmware section 2.3.2 (page 4-7) and sections
 3.3/5-3 and 3.3/9-2 through 9-3.
+
+## Graphics modes
+
+The terminal firmware selects its three display arrangements over the same
+serial command stream as text output:
+
+| Sequence | Mode | Graphics representation |
+|---|---|---|
+| `ESC 5` | Medium resolution | 256×252, three intensities plus background |
+| `ESC 3` | High resolution | 512×252, monochrome |
+| `ESC 4` | Character mode | 80×24 text, graphics disabled |
+
+Both graphics modes mix a 64×21 character plane into the 512×252 physical-dot
+raster. Entering either graphics mode preserves and reflows the linear text
+buffer, clears graphics RAM, and resets the graphics cursor and polar origin.
+Returning to character mode clears both planes, as specified by the CP/M
+reference manual.
+
+The visible graphics plane occupies 252 rows of 64 bytes (16,128 bytes). Its
+first 64 bytes are the top scanline. In high resolution, a byte contains eight
+left-to-right pixels, most-significant bit first. In medium resolution, it
+contains four double-width pixels in two parallel bit planes: bit pairs
+`7/3`, `6/2`, `5/1`, and `4/0` select background, half, normal, or bold
+brightness. Firmware drawing coordinates put `(0,0)` at the bottom left, so
+the command decoder reverses the y coordinate when addressing graphics RAM.
+
+The high-level terminal implements the documented Cartesian pixel/move/line
+commands (`ESC D/d/m/M/v`), polar origin/pixel/move/line commands
+(`ESC z/F/f/y/U/w`), and raw picture upload/download commands (`ESC r/t`).
+`ESC 0 b` supplies the current intensity when a medium-resolution pixel is
+set. `ESC ?` reports graphics enable/mode and the two-byte graphics cursor in
+the normal 12-byte terminal status reply.
+
+Sources: service manual terminal-firmware sections 2.3.5 through 2.3.8 (pages
+4-14 through 4-20), terminal-board sections 3.3/5-3 through 5-4 and 3.3/8-2
+through 8-3; CP/M reference manual sections 10.2.5 through 10.3.

@@ -6,12 +6,15 @@ The current prototype boots the supplied CP/M system floppy with the authentic
 4 KiB mainboard IPL. It integrates a complete Z80 interpreter and the IPL ROM
 overlay, an initial Intel 8257/uPD765 floppy path, vectored interrupts, and a
 high-level replacement for the serial terminal board. The Qt application
-renders the terminal's exact 80x24 character buffer with the supplied
-256-character P2000C font and accepts keyboard input. Per-cell terminal
-attributes provide inverse video, four phosphor intensity levels, underline,
-and blink. The display renderer preserves the 640x288 timing raster, calibrated
-non-square dot proportions, visible phosphor scanline gaps, restrained bloom,
-and a blinking block cursor.
+renders the terminal's 80x24 character mode and its mixed 256x252 and 512x252
+graphics modes, using the supplied 256-character P2000C font, and accepts
+keyboard input. The documented serial graphics protocol includes pixels,
+Cartesian and polar vectors, and raw picture transfer; the bundled
+`CHESS.COM` exercises it directly. Per-cell text attributes provide inverse
+video, four phosphor intensity levels, underline, and blink. The display
+renderer preserves the hardware timing rasters, calibrated non-square dot
+proportions, visible phosphor scanline gaps, restrained bloom, and a blinking
+block cursor.
 
 This is deliberately still a minimal prototype. The floppy controller covers
 the commands needed during startup, terminal control-code support is partial,

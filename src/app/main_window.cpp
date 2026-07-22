@@ -357,7 +357,9 @@ void MainWindow::refresh_screen() {
   if (machine_.has_ipl_rom()) {
     terminal_revision_ = machine_.terminal().revision();
     display_->set_screen(machine_.terminal().screen(),
-                         machine_.terminal().attributes());
+                         machine_.terminal().attributes(),
+                         machine_.terminal().graphics_mode(),
+                         machine_.terminal().graphic_screen());
     display_->set_cursor(machine_.terminal().cursor_column(),
                          machine_.terminal().cursor_row(),
                          machine_.terminal().cursor_visible());
@@ -549,7 +551,9 @@ void MainWindow::run_emulation_slice() {
   if (terminal_revision_ != machine_.terminal().revision()) {
     terminal_revision_ = machine_.terminal().revision();
     display_->set_screen(machine_.terminal().screen(),
-                         machine_.terminal().attributes());
+                         machine_.terminal().attributes(),
+                         machine_.terminal().graphics_mode(),
+                         machine_.terminal().graphic_screen());
     display_->set_cursor(machine_.terminal().cursor_column(),
                          machine_.terminal().cursor_row(),
                          machine_.terminal().cursor_visible());

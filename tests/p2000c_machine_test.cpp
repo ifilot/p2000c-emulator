@@ -1,10 +1,12 @@
 #include "core/p2000c_machine.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -27,6 +29,73 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   p2000c::P2000cMachine machine;
+
+  p2000c::Terminal graphics_terminal;
+  auto send_terminal = [&](std::initializer_list<std::uint8_t> bytes) {
+    for (const std::uint8_t byte : bytes) {
+      graphics_terminal.receive(byte);
+    }
+  };
+  send_terminal({0x1b, '5', 0x1b, 'D', 0x00, 0x00});
+  const std::size_t bottom_line =
+      (p2000c::Terminal::kGraphicHeight - 1) *
+      p2000c::Terminal::kGraphicBytesPerLine;
+  if (graphics_terminal.graphics_mode() !=
+          p2000c::Terminal::GraphicsMode::kMedium256 ||
+      graphics_terminal.graphic_screen()[bottom_line] != 0x80) {
+    std::cerr << "Medium-resolution pixel command was not decoded.\n";
+    return 1;
+  }
+  send_terminal({0x1b, '0', 0x01, 0x1b, 'D', 0x01, 0xfb});
+  if (graphics_terminal.graphic_screen().front() != 0x44) {
+    std::cerr << "Medium-resolution bold pixel planes are incorrect.\n";
+    return 1;
+  }
+
+  send_terminal({0x1b, '3', 0x1b, 'D', 0xff, 0x01, 0xfb,
+                 0x1b, 'm', 0x00, 0x00, 0x00,
+                 0x1b, 'M', 0x07, 0x00, 0x00});
+  if (graphics_terminal.graphics_mode() !=
+          p2000c::Terminal::GraphicsMode::kHigh512 ||
+      graphics_terminal.graphic_screen()[63] != 0x01 ||
+      graphics_terminal.graphic_screen()[bottom_line] != 0xff) {
+    std::cerr << "High-resolution pixel/vector commands were not decoded.\n";
+    return 1;
+  }
+
+  send_terminal(
+      {0x1b, 'r', 0x00, 0x00, 0xfb, 0x02, 0x00, 0xaa, 0x55});
+  if (graphics_terminal.graphic_screen()[0] != 0xaa ||
+      graphics_terminal.graphic_screen()[1] != 0x55) {
+    std::cerr << "Raw picture upload did not reach graphics RAM.\n";
+    return 1;
+  }
+  send_terminal({0x1b, 't', 0x00, 0x00, 0xfb, 0x02, 0x00});
+  if (graphics_terminal.take_input() != 0xaa ||
+      graphics_terminal.take_input() != 0x55) {
+    std::cerr << "Raw picture download did not return graphics RAM.\n";
+    return 1;
+  }
+
+  send_terminal({0x1b, '?'});
+  std::array<std::uint8_t, 12> status{};
+  for (std::uint8_t& byte : status) {
+    byte = graphics_terminal.take_input();
+  }
+  if ((status[3] & 0x03) != 0x03 || status[4] != 7 || status[5] != 0 ||
+      status[6] != 0) {
+    std::cerr << "Graphics fields in terminal status are incorrect.\n";
+    return 1;
+  }
+  send_terminal({0x1b, '4'});
+  if (graphics_terminal.graphics_mode() !=
+          p2000c::Terminal::GraphicsMode::kCharacter ||
+      std::any_of(graphics_terminal.graphic_screen().begin(),
+                  graphics_terminal.graphic_screen().end(),
+                  [](std::uint8_t byte) { return byte != 0; })) {
+    std::cerr << "Returning to character mode did not clear graphics RAM.\n";
+    return 1;
+  }
 
   p2000c::Terminal attribute_terminal;
   if (attribute_terminal.attributes().front() !=
@@ -181,6 +250,31 @@ int main(int argc, char* argv[]) {
     std::cerr << "UTIL did not produce its inverted heading; "
               << "inverted first-line cells=" << inverted_on_first_line << '\n';
     print_screen(boot_machine);
+    return 1;
+  }
+
+  p2000c::P2000cMachine chess_machine;
+  if (!chess_machine.load_ipl_rom(argv[1], &error) ||
+      !chess_machine.mount_floppy_a(argv[2], &error)) {
+    std::cerr << error << '\n';
+    return 1;
+  }
+  chess_machine.run_for(20'000'000);
+  for (const char key : std::string("CHESS\r")) {
+    chess_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  chess_machine.run_for(80'000'000);
+  const auto lit_graphics_bytes = std::count_if(
+      chess_machine.terminal().graphic_screen().begin(),
+      chess_machine.terminal().graphic_screen().end(),
+      [](std::uint8_t byte) { return byte != 0; });
+  if (chess_machine.terminal().graphics_mode() ==
+          p2000c::Terminal::GraphicsMode::kCharacter ||
+      lit_graphics_bytes < 100) {
+    std::cerr << "CHESS.COM did not activate and draw a graphics mode; mode="
+              << static_cast<int>(chess_machine.terminal().graphics_mode())
+              << " nonzero bytes=" << lit_graphics_bytes << '\n';
+    print_screen(chess_machine);
     return 1;
   }
   return 0;

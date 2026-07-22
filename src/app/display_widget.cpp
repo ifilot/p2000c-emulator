@@ -95,6 +95,8 @@ void DisplayWidget::set_base_color(const QColor& color) {
 void DisplayWidget::clear() {
   characters_.fill(0x20);
   attributes_.fill(Terminal::kDefaultAttribute);
+  graphic_screen_.fill(0);
+  graphics_mode_ = Terminal::GraphicsMode::kCharacter;
   rebuild_raster();
   update();
 }
@@ -115,8 +117,23 @@ void DisplayWidget::write_text(int column, int row, std::string_view text) {
 
 void DisplayWidget::set_screen(const Terminal::Screen& screen,
                                const Terminal::AttributeScreen& attributes) {
+  graphic_screen_.fill(0);
+  graphics_mode_ = Terminal::GraphicsMode::kCharacter;
   characters_ = screen;
   attributes_ = attributes;
+  rebuild_raster();
+  update();
+}
+
+void DisplayWidget::set_screen(
+    const Terminal::Screen& screen,
+    const Terminal::AttributeScreen& attributes,
+    Terminal::GraphicsMode graphics_mode,
+    const Terminal::GraphicScreen& graphic_screen) {
+  characters_ = screen;
+  attributes_ = attributes;
+  graphics_mode_ = graphics_mode;
+  graphic_screen_ = graphic_screen;
   rebuild_raster();
   update();
 }
@@ -149,31 +166,98 @@ void DisplayWidget::rebuild_raster() {
     return;
   }
 
-  for (int scanline = 0; scanline < kRasterHeight; ++scanline) {
+  const bool graphics =
+      graphics_mode_ != Terminal::GraphicsMode::kCharacter;
+  const int raster_width = graphics ? Terminal::kGraphicWidth
+                                    : kTextRasterWidth;
+  const int raster_height = graphics ? Terminal::kGraphicHeight
+                                     : kTextRasterHeight;
+  const int text_columns = graphics ? 64 : kColumns;
+
+  auto graphic_attribute = [&](int column, int scanline) {
+    const std::size_t address =
+        static_cast<std::size_t>(scanline * Terminal::kGraphicBytesPerLine);
+    if (graphics_mode_ == Terminal::GraphicsMode::kHigh512) {
+      const std::uint8_t byte = graphic_screen_[address + column / 8];
+      return (byte & (0x80 >> (column & 7))) != 0
+                 ? Terminal::kDefaultAttribute
+                 : std::uint8_t{0};
+    }
+
+    const int logical_column = column / 2;
+    const std::uint8_t byte = graphic_screen_[address + logical_column / 4];
+    const int pixel = logical_column & 3;
+    const bool high = (byte & (0x80 >> pixel)) != 0;
+    const bool low = (byte & (0x08 >> pixel)) != 0;
+    if (!high && !low) {
+      return std::uint8_t{0};
+    }
+    if (high && low) {
+      return Terminal::kAttributeIntensityLow;  // bold
+    }
+    if (high) {
+      return Terminal::kDefaultAttribute;  // normal
+    }
+    return static_cast<std::uint8_t>(Terminal::kAttributeIntensityHigh |
+                                     Terminal::kAttributeIntensityLow);
+  };
+
+  for (int scanline = 0; scanline < raster_height; ++scanline) {
     const int character_row = scanline / kCharacterHeight;
     const int glyph_row = scanline % kCharacterHeight;
     int run_start = -1;
     std::uint8_t run_attribute = Terminal::kDefaultAttribute;
-    for (int column = 0; column <= kRasterWidth; ++column) {
+    for (int column = 0; column <= raster_width; ++column) {
       bool dot = false;
       std::uint8_t attribute = Terminal::kDefaultAttribute;
-      if (column < kRasterWidth) {
+      if (column < raster_width) {
         const int character_column = column / kCharacterWidth;
         const int glyph_column = column % kCharacterWidth;
-        const int position = character_row * kColumns + character_column;
+        const int position = character_row * text_columns + character_column;
         const std::uint8_t character = characters_[position];
-        attribute = attributes_[position];
         const int source_x =
             (character & 0x0f) * kCharacterSheetPitch + glyph_column;
         const int source_y =
             (character >> 4) * kCharacterSheetPitch + glyph_row;
-        dot = qGreen(character_sheet_.pixel(source_x, source_y)) != 0;
-        if ((attribute & Terminal::kAttributeUnderline) != 0 &&
-            glyph_row == 9) {
-          dot = true;
-        }
-        if ((attribute & Terminal::kAttributeInverse) != 0) {
-          dot = !dot;
+        bool character_dot =
+            qGreen(character_sheet_.pixel(source_x, source_y)) != 0;
+        if (!graphics) {
+          attribute = attributes_[position];
+          if ((attribute & Terminal::kAttributeUnderline) != 0 &&
+              glyph_row == 9) {
+            character_dot = true;
+          }
+          if ((attribute & Terminal::kAttributeInverse) != 0) {
+            character_dot = !character_dot;
+          }
+          dot = character_dot;
+        } else {
+          attribute = graphic_attribute(column, scanline);
+          if (character_dot) {
+            if (attribute == 0) {
+              attribute = graphics_mode_ == Terminal::GraphicsMode::kHigh512
+                              ? Terminal::kDefaultAttribute
+                              : Terminal::kAttributeIntensityLow;
+            } else if (graphics_mode_ == Terminal::GraphicsMode::kHigh512) {
+              attribute = 0;
+            } else {
+              // Character dots invert both medium-resolution bit planes.
+              const int intensity =
+                  ((attribute & Terminal::kAttributeIntensityHigh) != 0 ? 2
+                                                                        : 0) |
+                  ((attribute & Terminal::kAttributeIntensityLow) != 0 ? 1
+                                                                       : 0);
+              constexpr std::array<std::uint8_t, 4> kInvertedIntensity = {
+                  Terminal::kAttributeIntensityLow,
+                  std::uint8_t{0},
+                  Terminal::kAttributeIntensityHigh |
+                      Terminal::kAttributeIntensityLow,
+                  Terminal::kDefaultAttribute,
+              };
+              attribute = kInvertedIntensity[intensity];
+            }
+          }
+          dot = attribute != 0;
         }
       }
       if (dot && run_start >= 0 && attribute != run_attribute) {
@@ -217,13 +301,26 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
   painter.save();
   painter.setClipRect(display);
   painter.setRenderHint(QPainter::Antialiasing, true);
-  const qreal dot_width = display.width() / kRasterWidth;
-  const qreal scanline_height = display.height() / kRasterHeight;
+  const bool graphics =
+      graphics_mode_ != Terminal::GraphicsMode::kCharacter;
+  const int raster_width = graphics ? Terminal::kGraphicWidth
+                                    : kTextRasterWidth;
+  const int raster_height = graphics ? Terminal::kGraphicHeight
+                                     : kTextRasterHeight;
+  const QSizeF raster_size(display.width() * raster_width / kTextRasterWidth,
+                           display.height() * raster_height /
+                               kTextRasterHeight);
+  const QRectF raster(display.center() -
+                          QPointF(raster_size.width() / 2.0,
+                                  raster_size.height() / 2.0),
+                      raster_size);
+  const qreal dot_width = raster.width() / raster_width;
+  const qreal scanline_height = raster.height() / raster_height;
   const qreal beam_height = scanline_height * 0.74;
 
   auto run_rect = [&](const RasterRun& run) {
-    return QRectF(display.left() + run.column * dot_width,
-                  display.top() + run.scanline * scanline_height +
+    return QRectF(raster.left() + run.column * dot_width,
+                  raster.top() + run.scanline * scanline_height +
                       (scanline_height - beam_height) / 2.0,
                   run.length * dot_width, beam_height);
   };

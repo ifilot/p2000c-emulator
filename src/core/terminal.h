@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <utility>
+#include <vector>
 
 namespace p2000c {
 
@@ -22,11 +24,25 @@ class Terminal {
       kAttribute,
       kLockLines,
       kSkipBytes,
+      kGraphicParameters,
+      kGraphicData,
     };
 
   public:
     using Screen = std::array<std::uint8_t, kColumns * kRows>;
     using AttributeScreen = std::array<std::uint8_t, kColumns * kRows>;
+    static constexpr int kGraphicWidth = 512;
+    static constexpr int kGraphicHeight = 252;
+    static constexpr int kGraphicBytesPerLine = kGraphicWidth / 8;
+    using GraphicScreen =
+        std::array<std::uint8_t, kGraphicBytesPerLine * kGraphicHeight>;
+
+    /** Video modes selected by the terminal firmware's ESC 3/4/5 commands. */
+    enum class GraphicsMode {
+      kCharacter,
+      kMedium256,
+      kHigh512,
+    };
 
     // ESC 0 attribute-byte layout documented in the terminal firmware manual.
     static constexpr std::uint8_t kAttributeIntensityHigh = 0x40;
@@ -63,6 +79,12 @@ class Terminal {
     /** Returns the terminal attribute byte stored for every character cell. */
     const AttributeScreen& attributes() const { return attributes_; }
 
+    /** Returns the currently selected character or graphics mode. */
+    GraphicsMode graphics_mode() const { return graphics_mode_; }
+
+    /** Returns the terminal board's 16,128-byte visible graphics RAM. */
+    const GraphicScreen& graphic_screen() const { return graphic_screen_; }
+
     /** Returns a counter changed after every visible screen update. */
     std::uint64_t revision() const { return revision_; }
 
@@ -94,16 +116,54 @@ class Terminal {
     /** Queues the documented 12-byte terminal status reply. */
     void queue_status();
 
+    /** Selects a graphics mode, or clears both planes on return to text. */
+    void set_graphics_mode(GraphicsMode mode);
+
+    /** Begins collecting parameters for a graphics escape command. */
+    void begin_graphic_command(std::uint8_t command, int parameter_count);
+
+    /** Executes a graphics command after all of its parameters arrive. */
+    void execute_graphic_command();
+
+    /** Reads a Cartesian coordinate from the collected command bytes. */
+    std::pair<int, int> graphic_coordinate(std::size_t offset = 0) const;
+
+    /** Converts a bottom-left coordinate to graphics-RAM byte position. */
+    std::size_t graphic_byte_address(int x, int y) const;
+
+    /** Sets or clears one logical graphics pixel at the current intensity. */
+    void set_graphic_pixel(int x, int y, bool set);
+
+    /** Draws or clears a clipped Cartesian line. */
+    void draw_graphic_line(int x0, int y0, int x1, int y1, bool set);
+
+    /** Returns the current logical width (80 text, 64 mixed graphics). */
+    int active_columns() const;
+
+    /** Returns the current logical height (24 text, 21 mixed graphics). */
+    int active_rows() const;
+
     Screen screen_{};
     AttributeScreen attributes_{};
+    GraphicScreen graphic_screen_{};
     std::deque<std::uint8_t> input_;
+    std::vector<std::uint8_t> graphic_parameters_;
     EscapeState escape_state_ = EscapeState::kNone;
     int cursor_column_ = 0;
     int cursor_row_ = 0;
     int pending_row_ = 0;
     int skip_bytes_ = 0;
+    int graphic_parameter_count_ = 0;
+    int graphic_data_count_ = 0;
+    std::size_t graphic_data_address_ = 0;
+    int graphic_cursor_x_ = 0;
+    int graphic_cursor_y_ = 0;
+    int graphic_origin_x_ = 0;
+    int graphic_origin_y_ = 0;
     int handshake_echoes_ = 0;
+    std::uint8_t graphic_command_ = 0;
     std::uint8_t attribute_ = kDefaultAttribute;
+    GraphicsMode graphics_mode_ = GraphicsMode::kCharacter;
     bool keyboard_locked_ = false;
     bool cursor_visible_ = true;
     std::uint64_t revision_ = 0;

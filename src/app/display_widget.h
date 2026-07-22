@@ -14,7 +14,7 @@
 
 namespace p2000c {
 
-/** Renders an 80x24 P2000C text display from the original character sheet. */
+/** Renders the P2000C terminal's character and mixed graphics modes. */
 class DisplayWidget : public QWidget {
   private:
     static constexpr int kColumns = 80;
@@ -22,10 +22,10 @@ class DisplayWidget : public QWidget {
     static constexpr int kCharacterWidth = 8;
     static constexpr int kCharacterHeight = 12;
     static constexpr int kCharacterSheetPitch = 12;
-    static constexpr int kRasterWidth = kColumns * kCharacterWidth;
-    static constexpr int kRasterHeight = kRows * kCharacterHeight;
-    static constexpr int kDisplayWidth = kRasterWidth * 7 / 8;
-    static constexpr int kDisplayHeight = kRasterHeight;
+    static constexpr int kTextRasterWidth = kColumns * kCharacterWidth;
+    static constexpr int kTextRasterHeight = kRows * kCharacterHeight;
+    static constexpr int kDisplayWidth = kTextRasterWidth * 7 / 8;
+    static constexpr int kDisplayHeight = kTextRasterHeight;
 
     struct RasterRun {
         int column = 0;
@@ -57,11 +57,20 @@ class DisplayWidget : public QWidget {
     void set_screen(const Terminal::Screen& screen,
                     const Terminal::AttributeScreen& attributes);
 
+    /** Replaces both video planes and selects the terminal's active mode. */
+    void set_screen(const Terminal::Screen& screen,
+                    const Terminal::AttributeScreen& attributes,
+                    Terminal::GraphicsMode graphics_mode,
+                    const Terminal::GraphicScreen& graphic_screen);
+
     /** Returns the character cells currently presented by the widget. */
     const Terminal::Screen& screen() const { return characters_; }
 
     /** Returns the per-cell terminal attributes currently being presented. */
     const Terminal::AttributeScreen& attributes() const { return attributes_; }
+
+    /** Returns the graphics mode currently being presented. */
+    Terminal::GraphicsMode graphics_mode() const { return graphics_mode_; }
 
     /** Installs the callback receiving translated host key presses. */
     void set_key_handler(std::function<void(std::uint8_t)> handler);
@@ -94,6 +103,7 @@ class DisplayWidget : public QWidget {
     QImage character_sheet_;
     std::array<std::uint8_t, kColumns * kRows> characters_{};
     Terminal::AttributeScreen attributes_{};
+    Terminal::GraphicScreen graphic_screen_{};
     std::vector<RasterRun> raster_runs_;
     std::function<void(std::uint8_t)> key_handler_;
     int cursor_column_ = 0;
@@ -101,6 +111,8 @@ class DisplayWidget : public QWidget {
     bool cursor_enabled_ = true;
     bool cursor_phase_ = true;
     bool attribute_blink_phase_ = true;
+    Terminal::GraphicsMode graphics_mode_ =
+        Terminal::GraphicsMode::kCharacter;
     QColor base_color_ = default_base_color();
 };
 

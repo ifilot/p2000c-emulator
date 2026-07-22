@@ -1,6 +1,8 @@
 #include "core/terminal.h"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
 namespace p2000c {
 
@@ -9,14 +11,25 @@ Terminal::Terminal() { reset(); }
 void Terminal::reset() {
   screen_.fill(0x20);
   attributes_.fill(kDefaultAttribute);
+  graphic_screen_.fill(0);
   input_.clear();
+  graphic_parameters_.clear();
   escape_state_ = EscapeState::kNone;
   cursor_column_ = 0;
   cursor_row_ = 0;
   pending_row_ = 0;
   skip_bytes_ = 0;
+  graphic_parameter_count_ = 0;
+  graphic_data_count_ = 0;
+  graphic_data_address_ = 0;
+  graphic_cursor_x_ = 0;
+  graphic_cursor_y_ = 0;
+  graphic_origin_x_ = 0;
+  graphic_origin_y_ = 0;
   handshake_echoes_ = 0;
+  graphic_command_ = 0;
   attribute_ = kDefaultAttribute;
+  graphics_mode_ = GraphicsMode::kCharacter;
   keyboard_locked_ = false;
   cursor_visible_ = true;
   ++revision_;
@@ -41,13 +54,15 @@ void Terminal::receive(std::uint8_t value) {
       escape_command(value);
       return;
     case EscapeState::kCursorRow:
-      pending_row_ = std::clamp(static_cast<int>(value) - 0x20, 0, kRows - 1);
+      pending_row_ =
+          std::clamp(static_cast<int>(value) - 0x20, 0, active_rows() - 1);
       escape_state_ = EscapeState::kCursorColumn;
       return;
     case EscapeState::kCursorColumn:
       cursor_row_ = pending_row_;
       cursor_column_ =
-          std::clamp(static_cast<int>(value) - 0x20, 0, kColumns - 1);
+          std::clamp(static_cast<int>(value) - 0x20, 0,
+                     active_columns() - 1);
       escape_state_ = EscapeState::kNone;
       return;
     case EscapeState::kAttribute:
@@ -59,6 +74,22 @@ void Terminal::receive(std::uint8_t value) {
       return;
     case EscapeState::kSkipBytes:
       if (--skip_bytes_ == 0) {
+        escape_state_ = EscapeState::kNone;
+      }
+      return;
+    case EscapeState::kGraphicParameters:
+      graphic_parameters_.push_back(value);
+      if (static_cast<int>(graphic_parameters_.size()) ==
+          graphic_parameter_count_) {
+        execute_graphic_command();
+      }
+      return;
+    case EscapeState::kGraphicData:
+      graphic_screen_[graphic_data_address_] = value;
+      graphic_data_address_ =
+          (graphic_data_address_ + 1) % graphic_screen_.size();
+      ++revision_;
+      if (--graphic_data_count_ == 0) {
         escape_state_ = EscapeState::kNone;
       }
       return;
@@ -75,11 +106,11 @@ void Terminal::receive(std::uint8_t value) {
       keyboard_locked_ = false;
       break;
     case 0x04:
-      cursor_column_ = kColumns - 1;
-      cursor_row_ = kRows - 1;
+      cursor_column_ = active_columns() - 1;
+      cursor_row_ = active_rows() - 1;
       break;
     case 0x06:
-      if (++cursor_column_ == kColumns) {
+      if (++cursor_column_ == active_columns()) {
         cursor_column_ = 0;
         cursor_down();
       }
@@ -91,7 +122,8 @@ void Terminal::receive(std::uint8_t value) {
       cursor_column_ = std::max(cursor_column_ - 1, 0);
       break;
     case 0x09:
-      cursor_column_ = std::min((cursor_column_ + 8) & ~7, kColumns - 1);
+      cursor_column_ =
+          std::min((cursor_column_ + 8) & ~7, active_columns() - 1);
       break;
     case 0x0a:
       cursor_down();
@@ -142,38 +174,47 @@ std::uint8_t Terminal::take_input() {
 }
 
 void Terminal::put_character(std::uint8_t value) {
-  const std::size_t position = cursor_row_ * kColumns + cursor_column_;
+  const int columns = active_columns();
+  const std::size_t position = cursor_row_ * columns + cursor_column_;
   screen_[position] = value;
   attributes_[position] = attribute_;
   ++revision_;
-  if (++cursor_column_ == kColumns) {
+  if (++cursor_column_ == columns) {
     cursor_column_ = 0;
     cursor_down();
   }
 }
 
 void Terminal::cursor_down() {
-  if (++cursor_row_ == kRows) {
-    cursor_row_ = kRows - 1;
+  if (++cursor_row_ == active_rows()) {
+    cursor_row_ = active_rows() - 1;
     scroll_up();
   }
 }
 
 void Terminal::scroll_up() {
-  std::move(screen_.begin() + kColumns, screen_.end(), screen_.begin());
-  std::fill(screen_.end() - kColumns, screen_.end(), 0x20);
-  std::move(attributes_.begin() + kColumns, attributes_.end(),
+  const int columns = active_columns();
+  const int cells = columns * active_rows();
+  std::move(screen_.begin() + columns, screen_.begin() + cells,
+            screen_.begin());
+  std::fill(screen_.begin() + cells - columns, screen_.begin() + cells, 0x20);
+  std::move(attributes_.begin() + columns, attributes_.begin() + cells,
             attributes_.begin());
-  std::fill(attributes_.end() - kColumns, attributes_.end(), attribute_);
+  std::fill(attributes_.begin() + cells - columns,
+            attributes_.begin() + cells, attribute_);
   ++revision_;
 }
 
 void Terminal::scroll_down() {
-  std::move_backward(screen_.begin(), screen_.end() - kColumns, screen_.end());
-  std::fill(screen_.begin(), screen_.begin() + kColumns, 0x20);
-  std::move_backward(attributes_.begin(), attributes_.end() - kColumns,
-                     attributes_.end());
-  std::fill(attributes_.begin(), attributes_.begin() + kColumns, attribute_);
+  const int columns = active_columns();
+  const int cells = columns * active_rows();
+  std::move_backward(screen_.begin(), screen_.begin() + cells - columns,
+                     screen_.begin() + cells);
+  std::fill(screen_.begin(), screen_.begin() + columns, 0x20);
+  std::move_backward(attributes_.begin(),
+                     attributes_.begin() + cells - columns,
+                     attributes_.begin() + cells);
+  std::fill(attributes_.begin(), attributes_.begin() + columns, attribute_);
   ++revision_;
 }
 
@@ -184,24 +225,26 @@ void Terminal::escape_command(std::uint8_t value) {
       escape_state_ = EscapeState::kCursorRow;
       break;
     case 'K': {
+      const int columns = active_columns();
       const auto begin =
-          screen_.begin() + cursor_row_ * kColumns + cursor_column_;
-      const auto end = screen_.begin() + (cursor_row_ + 1) * kColumns;
+          screen_.begin() + cursor_row_ * columns + cursor_column_;
+      const auto end = screen_.begin() + (cursor_row_ + 1) * columns;
       const auto attribute_begin =
-          attributes_.begin() + cursor_row_ * kColumns + cursor_column_;
+          attributes_.begin() + cursor_row_ * columns + cursor_column_;
       std::fill(begin, end, 0x20);
       std::fill(attribute_begin,
-                attributes_.begin() + (cursor_row_ + 1) * kColumns, attribute_);
+                attributes_.begin() + (cursor_row_ + 1) * columns, attribute_);
     }
       ++revision_;
       break;
     case 'k': {
+      const int cells = active_columns() * active_rows();
       const auto begin =
-          screen_.begin() + cursor_row_ * kColumns + cursor_column_;
+          screen_.begin() + cursor_row_ * active_columns() + cursor_column_;
       const auto attribute_begin =
-          attributes_.begin() + cursor_row_ * kColumns + cursor_column_;
-      std::fill(begin, screen_.end(), 0x20);
-      std::fill(attribute_begin, attributes_.end(), attribute_);
+          attributes_.begin() + cursor_row_ * active_columns() + cursor_column_;
+      std::fill(begin, screen_.begin() + cells, 0x20);
+      std::fill(attribute_begin, attributes_.begin() + cells, attribute_);
     }
       ++revision_;
       break;
@@ -221,6 +264,42 @@ void Terminal::escape_command(std::uint8_t value) {
       break;
     case '0':
       escape_state_ = EscapeState::kAttribute;
+      break;
+    case '5':
+      set_graphics_mode(GraphicsMode::kMedium256);
+      break;
+    case '3':
+      set_graphics_mode(GraphicsMode::kHigh512);
+      break;
+    case '4':
+      set_graphics_mode(GraphicsMode::kCharacter);
+      break;
+    case 'd':
+    case 'D':
+    case 'm':
+    case 'M':
+    case 'v':
+    case 'z':
+      if (graphics_mode_ != GraphicsMode::kCharacter) {
+        begin_graphic_command(value,
+                              graphics_mode_ == GraphicsMode::kHigh512 ? 3 : 2);
+      }
+      break;
+    case 'y':
+    case 'U':
+    case 'w':
+    case 'F':
+    case 'f':
+      if (graphics_mode_ != GraphicsMode::kCharacter) {
+        begin_graphic_command(value, 4);
+      }
+      break;
+    case 'r':
+    case 't':
+      if (graphics_mode_ != GraphicsMode::kCharacter) {
+        begin_graphic_command(
+            value, (graphics_mode_ == GraphicsMode::kHigh512 ? 3 : 2) + 2);
+      }
       break;
     case 'A':
       escape_state_ = EscapeState::kLockLines;
@@ -246,11 +325,219 @@ void Terminal::escape_command(std::uint8_t value) {
 }
 
 void Terminal::queue_status() {
+  const int columns = active_columns();
   input_.push_back(static_cast<std::uint8_t>(cursor_column_ + 1));
   input_.push_back(static_cast<std::uint8_t>(cursor_row_ + 1));
-  input_.push_back(screen_[cursor_row_ * kColumns + cursor_column_]);
-  input_.push_back(keyboard_locked_ ? 0x20 : 0x00);
-  input_.insert(input_.end(), 8, 0x00);
+  input_.push_back(screen_[cursor_row_ * columns + cursor_column_]);
+  std::uint8_t status = keyboard_locked_ ? 0x20 : 0x00;
+  if (graphics_mode_ != GraphicsMode::kCharacter) {
+    status |= 0x01;
+  }
+  if (graphics_mode_ == GraphicsMode::kHigh512) {
+    status |= 0x02;
+  }
+  input_.push_back(status);
+  input_.push_back(static_cast<std::uint8_t>(graphic_cursor_x_));
+  input_.push_back(static_cast<std::uint8_t>(graphic_cursor_x_ >> 8));
+  input_.push_back(static_cast<std::uint8_t>(graphic_cursor_y_));
+  input_.insert(input_.end(), 5, 0x00);
+}
+
+void Terminal::set_graphics_mode(GraphicsMode mode) {
+  if (mode == GraphicsMode::kCharacter) {
+    screen_.fill(0x20);
+    attributes_.fill(kDefaultAttribute);
+    cursor_column_ = 0;
+    cursor_row_ = 0;
+  } else if (graphics_mode_ == GraphicsMode::kCharacter) {
+    const int linear_cursor = cursor_row_ * kColumns + cursor_column_;
+    cursor_row_ = std::min(linear_cursor / 64, 20);
+    cursor_column_ = linear_cursor % 64;
+  }
+  graphics_mode_ = mode;
+  graphic_screen_.fill(0);
+  graphic_cursor_x_ = 0;
+  graphic_cursor_y_ = 0;
+  graphic_origin_x_ = 0;
+  graphic_origin_y_ = 0;
+  ++revision_;
+}
+
+void Terminal::begin_graphic_command(std::uint8_t command,
+                                     int parameter_count) {
+  graphic_command_ = command;
+  graphic_parameter_count_ = parameter_count;
+  graphic_parameters_.clear();
+  escape_state_ = EscapeState::kGraphicParameters;
+}
+
+std::pair<int, int> Terminal::graphic_coordinate(std::size_t offset) const {
+  if (graphics_mode_ == GraphicsMode::kHigh512) {
+    const int x = graphic_parameters_[offset] |
+                  (static_cast<int>(graphic_parameters_[offset + 1]) << 8);
+    return {x, graphic_parameters_[offset + 2]};
+  }
+  return {graphic_parameters_[offset], graphic_parameters_[offset + 1]};
+}
+
+std::size_t Terminal::graphic_byte_address(int x, int y) const {
+  const int pixels_per_byte =
+      graphics_mode_ == GraphicsMode::kHigh512 ? 8 : 4;
+  const int row = std::clamp(kGraphicHeight - 1 - y, 0, kGraphicHeight - 1);
+  const int byte_column = std::clamp(x / pixels_per_byte, 0,
+                                     kGraphicBytesPerLine - 1);
+  return static_cast<std::size_t>(row * kGraphicBytesPerLine + byte_column);
+}
+
+void Terminal::set_graphic_pixel(int x, int y, bool set) {
+  const int width =
+      graphics_mode_ == GraphicsMode::kHigh512 ? kGraphicWidth : 256;
+  if (x < 0 || x >= width || y < 0 || y >= kGraphicHeight) {
+    return;
+  }
+  const std::size_t address = graphic_byte_address(x, y);
+  if (graphics_mode_ == GraphicsMode::kHigh512) {
+    const std::uint8_t mask = static_cast<std::uint8_t>(0x80 >> (x & 7));
+    if (set) {
+      graphic_screen_[address] |= mask;
+    } else {
+      graphic_screen_[address] &= static_cast<std::uint8_t>(~mask);
+    }
+  } else {
+    const int pixel = x & 3;
+    const std::uint8_t mask = static_cast<std::uint8_t>(
+        (0x80 >> pixel) | (0x08 >> pixel));
+    graphic_screen_[address] &= static_cast<std::uint8_t>(~mask);
+    if (set) {
+      // Medium graphics stores brightness as two parallel bit planes.
+      // Translate serial quarter/bold/normal/half values 00/01/10/11 to
+      // graphics-RAM background/bold/normal/half pairs 00/11/10/01.
+      const int intensity =
+          ((attribute_ & kAttributeIntensityHigh) != 0 ? 2 : 0) |
+          ((attribute_ & kAttributeIntensityLow) != 0 ? 1 : 0);
+      constexpr std::array<std::uint8_t, 4> kPlaneBits = {
+          0x00, 0x03, 0x02, 0x01,
+      };
+      std::uint8_t bits = 0;
+      if ((kPlaneBits[intensity] & 0x02) != 0) {
+        bits |= static_cast<std::uint8_t>(0x80 >> pixel);
+      }
+      if ((kPlaneBits[intensity] & 0x01) != 0) {
+        bits |= static_cast<std::uint8_t>(0x08 >> pixel);
+      }
+      graphic_screen_[address] |= bits;
+    }
+  }
+  ++revision_;
+}
+
+void Terminal::draw_graphic_line(int x0, int y0, int x1, int y1, bool set) {
+  const int dx = std::abs(x1 - x0);
+  const int sx = x0 < x1 ? 1 : -1;
+  const int dy = -std::abs(y1 - y0);
+  const int sy = y0 < y1 ? 1 : -1;
+  int error = dx + dy;
+  while (true) {
+    set_graphic_pixel(x0, y0, set);
+    if (x0 == x1 && y0 == y1) {
+      break;
+    }
+    const int twice_error = 2 * error;
+    if (twice_error >= dy) {
+      error += dy;
+      x0 += sx;
+    }
+    if (twice_error <= dx) {
+      error += dx;
+      y0 += sy;
+    }
+  }
+}
+
+void Terminal::execute_graphic_command() {
+  escape_state_ = EscapeState::kNone;
+  if (graphic_command_ == 'r' || graphic_command_ == 't') {
+    const auto [x, y] = graphic_coordinate();
+    const std::size_t count_offset =
+        graphics_mode_ == GraphicsMode::kHigh512 ? 3 : 2;
+    const int count = graphic_parameters_[count_offset] |
+                      (static_cast<int>(graphic_parameters_[count_offset + 1])
+                       << 8);
+    std::size_t address = graphic_byte_address(x, y);
+    if (graphic_command_ == 'r') {
+      graphic_data_address_ = address;
+      graphic_data_count_ = count;
+      if (graphic_data_count_ > 0) {
+        escape_state_ = EscapeState::kGraphicData;
+      }
+    } else {
+      for (int index = 0; index < count; ++index) {
+        input_.push_back(graphic_screen_[address]);
+        address = (address + 1) % graphic_screen_.size();
+      }
+    }
+    return;
+  }
+
+  if (graphic_command_ == 'y' || graphic_command_ == 'U' ||
+      graphic_command_ == 'w' || graphic_command_ == 'F' ||
+      graphic_command_ == 'f') {
+    const int angle = graphic_parameters_[0] |
+                      (static_cast<int>(graphic_parameters_[1]) << 8);
+    const int radius = graphic_parameters_[2] |
+                       (static_cast<int>(graphic_parameters_[3]) << 8);
+    const double radians =
+        static_cast<double>(angle) * std::numbers::pi / 180.0;
+    const int x = graphic_origin_x_ +
+                  static_cast<int>(std::lround(radius * std::cos(radians)));
+    const int y = graphic_origin_y_ +
+                  static_cast<int>(std::lround(radius * std::sin(radians)));
+    if (graphic_command_ == 'y') {
+      graphic_cursor_x_ = x;
+      graphic_cursor_y_ = y;
+    } else if (graphic_command_ == 'F' || graphic_command_ == 'f') {
+      set_graphic_pixel(x, y, graphic_command_ == 'F');
+    } else {
+      draw_graphic_line(graphic_cursor_x_, graphic_cursor_y_, x, y,
+                        graphic_command_ == 'U');
+      graphic_cursor_x_ = x;
+      graphic_cursor_y_ = y;
+    }
+    return;
+  }
+
+  const auto [x, y] = graphic_coordinate();
+  switch (graphic_command_) {
+    case 'D':
+    case 'd':
+      set_graphic_pixel(x, y, graphic_command_ == 'D');
+      break;
+    case 'm':
+      graphic_cursor_x_ = x;
+      graphic_cursor_y_ = y;
+      break;
+    case 'M':
+    case 'v':
+      draw_graphic_line(graphic_cursor_x_, graphic_cursor_y_, x, y,
+                        graphic_command_ == 'M');
+      graphic_cursor_x_ = x;
+      graphic_cursor_y_ = y;
+      break;
+    case 'z':
+      graphic_origin_x_ = x;
+      graphic_origin_y_ = y;
+      break;
+    default:
+      break;
+  }
+}
+
+int Terminal::active_columns() const {
+  return graphics_mode_ == GraphicsMode::kCharacter ? kColumns : 64;
+}
+
+int Terminal::active_rows() const {
+  return graphics_mode_ == GraphicsMode::kCharacter ? kRows : 21;
 }
 
 }  // namespace p2000c

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -109,6 +110,63 @@ bool validate_attribute_rendering() {
   return true;
 }
 
+/** Checks that both graphics RAM layouts reach their physical raster edges. */
+bool validate_graphics_rendering() {
+  auto send = [](p2000c::Terminal* terminal,
+                 std::initializer_list<std::uint8_t> bytes) {
+    for (const std::uint8_t byte : bytes) {
+      terminal->receive(byte);
+    }
+  };
+  auto area_energy = [](const QImage& image, int center_x, int center_y) {
+    int energy = 0;
+    for (int y = center_y - 3; y <= center_y + 3; ++y) {
+      for (int x = center_x - 3; x <= center_x + 3; ++x) {
+        energy += qGreen(image.pixel(x, y));
+      }
+    }
+    return energy;
+  };
+  auto render = [](const p2000c::Terminal& terminal) {
+    p2000c::DisplayWidget display;
+    display.setFixedSize(560, 288);
+    display.set_cursor(0, 0, false);
+    display.set_screen(terminal.screen(), terminal.attributes(),
+                       terminal.graphics_mode(), terminal.graphic_screen());
+    QImage image(display.size(), QImage::Format_ARGB32);
+    image.fill(Qt::black);
+    display.render(&image);
+    return image;
+  };
+
+  p2000c::Terminal medium;
+  send(&medium, {0x1b, '5', 0x1b, 'D', 0x00, 0x00});
+  const QImage medium_image = render(medium);
+  const int medium_pixel_energy = area_energy(medium_image, 57, 269);
+  const int medium_blank_energy = area_energy(medium_image, 72, 269);
+  if (medium.graphics_mode() !=
+          p2000c::Terminal::GraphicsMode::kMedium256 ||
+      medium_pixel_energy * 4 <= medium_blank_energy * 5) {
+    std::cerr << "Medium-resolution graphics were not rendered: "
+              << medium_pixel_energy << " vs " << medium_blank_energy
+              << ".\n";
+    return false;
+  }
+
+  p2000c::Terminal high;
+  send(&high, {0x1b, '3', 0x1b, 'D', 0xff, 0x01, 0xfb});
+  const QImage high_image = render(high);
+  const int high_pixel_energy = area_energy(high_image, 503, 19);
+  const int high_blank_energy = area_energy(high_image, 488, 19);
+  if (high.graphics_mode() != p2000c::Terminal::GraphicsMode::kHigh512 ||
+      high_pixel_energy * 4 <= high_blank_energy * 5) {
+    std::cerr << "High-resolution graphics were not rendered: "
+              << high_pixel_energy << " vs " << high_blank_energy << ".\n";
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -121,7 +179,7 @@ int main(int argc, char* argv[]) {
   QApplication::setApplicationName("P2000C Emulator UI Test");
   QApplication::setOrganizationName("P2000C Emulator Project");
 
-  if (!validate_attribute_rendering()) {
+  if (!validate_attribute_rendering() || !validate_graphics_rendering()) {
     return 1;
   }
 
