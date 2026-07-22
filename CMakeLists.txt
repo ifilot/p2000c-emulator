@@ -198,6 +198,27 @@ if(P2000C_BUILD_APP)
   endif()
 
   if(APPLE)
+    if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+      set(P2000C_MACOS_RUNTIME_FILES
+          "\"$<TARGET_LINKER_FILE:OpenAL::OpenAL>\"")
+      if(TARGET fmt::fmt)
+        list(APPEND P2000C_MACOS_RUNTIME_FILES
+             "\"$<TARGET_LINKER_FILE:fmt::fmt>\"")
+      endif()
+      list(JOIN P2000C_MACOS_RUNTIME_FILES "\n        "
+           P2000C_MACOS_RUNTIME_FILES)
+      set(P2000C_MACOS_RUNTIME_INSTALL_CODE [=[
+        file(INSTALL
+          @P2000C_MACOS_RUNTIME_FILES@
+          DESTINATION
+            "${CMAKE_INSTALL_PREFIX}/P2000C Emulator.app/Contents/Frameworks"
+          FOLLOW_SYMLINK_CHAIN)
+      ]=])
+      string(CONFIGURE "${P2000C_MACOS_RUNTIME_INSTALL_CODE}"
+             P2000C_MACOS_RUNTIME_INSTALL_CODE @ONLY)
+      install(CODE "${P2000C_MACOS_RUNTIME_INSTALL_CODE}"
+        COMPONENT application)
+    endif()
     # Qt 6.8.3 does not quote bundle names in its generated deploy script.
     install(CODE "
       include(\"${QT_DEPLOY_SUPPORT}\")
