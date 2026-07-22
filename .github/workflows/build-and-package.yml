@@ -188,7 +188,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.package_arch }}
-          path: dist/*
+          path: dist/p2000c-emulator-*
           if-no-files-found: error
           retention-days: 1
 
@@ -210,6 +210,23 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
-          --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' assets < <(
+            find dist -maxdepth 1 -type f \
+              -name 'p2000c-emulator-*' -print0 | sort -z
+          )
+          if (( ${#assets[@]} == 0 )); then
+            echo "No release assets found in dist." >&2
+            exit 1
+          fi
+
+          printf 'Release assets:\n'
+          printf '  %s\n' "${assets[@]}"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            "${assets[@]}"
