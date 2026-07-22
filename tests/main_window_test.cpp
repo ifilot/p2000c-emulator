@@ -12,9 +12,11 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFrame>
+#include <QFontInfo>
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLayout>
 #include <QMenu>
 #include <QPalette>
 #include <QPushButton>
@@ -28,6 +30,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <initializer_list>
 #include <iostream>
@@ -542,13 +545,14 @@ int main(int argc, char* argv[]) {
         logo != nullptr && !logo->pixmap().isNull() &&
         overview->toPlainText().contains(P2000C_VERSION) &&
         overview->toPlainText().contains("not affiliated") &&
-        notices != nullptr && notices->toPlainText().contains("Font Awesome") &&
+        notices != nullptr &&
+        notices->toPlainText().contains("Drive-panel illustrations") &&
+        notices->toPlainText().contains("OpenAI image-generation") &&
         notices->toPlainText().contains("MAME") &&
         notices->toPlainText().contains("redistribution rights") &&
         third_party_licenses != nullptr &&
         third_party_licenses->toPlainText().contains("MIT License") &&
         third_party_licenses->toPlainText().contains("BSD-3-Clause") &&
-        third_party_licenses->toPlainText().contains("CC BY 4.0") &&
         license != nullptr &&
         license->toPlainText().contains("GNU GENERAL PUBLIC LICENSE") &&
         buttons != nullptr;
@@ -778,7 +782,6 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   auto* drive_a_status = window.findChild<QLabel*>("floppyDriveAStatus");
-  auto* drive_a_source = window.findChild<QWidget*>("floppyDriveASource");
   auto* drive_a_position =
       window.findChild<QWidget*>("floppyDriveAPosition");
   auto* drive_a_menu = window.findChild<QMenu*>("floppyDriveAMenu");
@@ -792,32 +795,46 @@ int main(int argc, char* argv[]) {
   if (drive_a_led != nullptr) {
     drive_a_led->render(&idle_led);
   }
-  if (drive_a_status == nullptr || drive_a_source == nullptr ||
-      drive_a_position == nullptr || drive_a_menu == nullptr ||
+  QLayoutItem* drive_a_text_item =
+      drive_a_card != nullptr && drive_a_card->layout() != nullptr
+          ? drive_a_card->layout()->itemAt(2)
+          : nullptr;
+  if (drive_a_status == nullptr || drive_a_position == nullptr ||
+      drive_a_menu == nullptr ||
       drive_a_current == nullptr || drive_panel == nullptr ||
       drive_a_led == nullptr || drive_a_icon == nullptr ||
       drive_a_icon->pixmap().isNull() || drive_a_card == nullptr ||
       drive_a_card->frameShape() != QFrame::NoFrame ||
       !drive_a_card->property("driveCard").toBool() ||
       !drive_a_icon->property("driveTypeIcon").toBool() ||
+      drive_a_icon->size() != QSize(60, 60) ||
+      drive_a_icon->pixmap().size() != QSize(58, 58) ||
+      drive_a_text_item == nullptr || drive_a_text_item->layout() == nullptr ||
+      std::abs(drive_a_led->geometry().center().y() -
+               drive_a_icon->geometry().center().y()) > 1 ||
+      std::abs(drive_a_text_item->geometry().center().y() -
+               drive_a_icon->geometry().center().y()) > 1 ||
+      !drive_a_icon->accessibleName().contains("hardware illustration") ||
       !drive_a_status->property("mediaFilename").toBool() ||
+      !QFontInfo(drive_a_status->font()).fixedPitch() ||
       window.palette().color(QPalette::Window) != QColor("#e8dcb3") ||
       !qApp->styleSheet().contains(
           "QFrame#driveActivityPanel {\n      background: #f5eac6;") ||
       idle_led.isNull() ||
       qGray(idle_led.pixel(9, 8)) <= qGray(idle_led.pixel(12, 12)) ||
       idle_led.pixelColor(12, 12) == idle_led.pixelColor(0, 0) ||
-      !drive_a_status->text().contains("system_drive_a.flp") ||
-      !drive_a_source->accessibleName().contains("bundled template") ||
-      !drive_a_source->toolTip().contains("template remains pristine") ||
+      drive_a_status->text() != "system_drive_a.flp *" ||
+      window.findChild<QWidget*>("floppyDriveASource") != nullptr ||
       !drive_a_position->accessibleName().contains("Track") ||
       !drive_a_position->accessibleName().contains("side") ||
+      !drive_a_status->toolTip().contains("bundled template") ||
       !drive_a_status->toolTip().contains(system_path) ||
       !drive_a_menu->title().contains("system_drive_a.flp") ||
       !drive_a_current->isChecked() || !system->isChecked()) {
     std::cerr << "Drive A media indicators did not show the mounted image.\n";
     return 1;
   }
+  drive_panel->grab().save(QDir(test_root).filePath("drive-panel-preview.png"));
   QFile system_master(":/images/system.flp");
   QFile system_session(system_path);
   if (!system_master.open(QIODevice::ReadOnly) ||
@@ -894,7 +911,7 @@ int main(int argc, char* argv[]) {
   }
   auto* drive_b_status = window.findChild<QLabel*>("floppyDriveBStatus");
   if (drive_b_status == nullptr || drive_b_current == nullptr ||
-      !drive_b_status->text().contains("blank_drive_b.flp") ||
+      drive_b_status->text() != "blank_drive_b.flp *" ||
       !drive_b_current->isChecked() || !blank->isChecked()) {
     std::cerr << "Drive B media indicators did not show the mounted image.\n";
     return 1;
@@ -906,8 +923,6 @@ int main(int argc, char* argv[]) {
   for (int drive = 1; drive <= 2; ++drive) {
     auto* status =
         window.findChild<QLabel*>(QString("hardDisk%1Status").arg(drive));
-    auto* source =
-        window.findChild<QWidget*>(QString("hardDisk%1Source").arg(drive));
     auto* position =
         window.findChild<QWidget*>(QString("hardDisk%1Position").arg(drive));
     auto* current = window.findChild<QAction*>(
@@ -915,10 +930,11 @@ int main(int argc, char* argv[]) {
     auto* bundled = window.findChild<QAction*>(
         QString("mountDefaultHardDisk%1Action").arg(drive));
     const QString filename = QString("hard_disk_%1.hda").arg(drive);
-    if (status == nullptr || source == nullptr || position == nullptr ||
+    if (status == nullptr || position == nullptr ||
         current == nullptr || bundled == nullptr ||
-        !status->text().contains(filename) || !current->isChecked() ||
-        !source->accessibleName().contains("bundled template") ||
+        status->text() != filename + " *" || !current->isChecked() ||
+        window.findChild<QWidget*>(QString("hardDisk%1Source").arg(drive)) !=
+            nullptr ||
         !position->accessibleName().startsWith("SASI block ") ||
         !bundled->isChecked() ||
         !validate_image(current->statusTip(),
@@ -958,7 +974,8 @@ int main(int argc, char* argv[]) {
       settings.value("media/recent/floppy1").toStringList();
   if (stored_recent.size() != 5 || stored_recent.front() != recent_paths.back() ||
       stored_recent.contains(recent_paths.front()) ||
-      recent_menu->actions().size() != 5) {
+      recent_menu->actions().size() != 5 ||
+      drive_b_status->text().endsWith(" *")) {
     std::cerr << "Per-drive recent images were not limited to the latest five.\n";
     return 1;
   }

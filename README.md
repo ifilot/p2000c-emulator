@@ -1,8 +1,20 @@
 # Philips P2000C emulator
 
-Philips P2000C Luggable emulator.
+The Philips P2000C Emulator recreates the classic Z80-based Philips P2000C
+luggable computer. It provides a Qt graphical interface for interactive use and
+a headless command-line mode for scripting and automated testing.
 
 ![Screenshot of the P2000C Emulator](screenshots/screenshot_emulator.png)
+
+## Features
+
+- Boots CP/M and runs original P2000C software
+- Supports two floppy drives while preserving source disk images by default
+- Reproduces the 80x24 text display and graphics mode
+- Provides scripted keyboard input and screen-text detection
+- Exposes the screen, CPU state, cursor, cycle count, and memory as JSON
+- Offers accelerated storage for fast, deterministic automation
+- Builds as either a complete desktop application or a standalone headless core
 
 ## Compilation
 

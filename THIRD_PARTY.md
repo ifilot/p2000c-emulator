@@ -24,17 +24,18 @@ The unmodified 44.1 kHz mono PCM recordings are the five loaded-media samples
 used by MAME's 5.25-inch floppy sound device. Debian's machine-readable
 copyright declaration applies BSD-3-Clause to these files.
 
-## Font Awesome drive icons
+## Drive-panel illustrations
 
-- Project: <https://fontawesome.com/>
-- Version: 7.3.1
-- Vendored at: `icons/floppy-disk.svg`, `icons/hard-drive.svg`
-- License: CC BY 4.0; see `icons/LICENSE-FONT-AWESOME.txt`
-- Copyright: 2026 Fonticons, Inc.
-- Purpose: floppy and hard-drive symbols in the drive-status panel
+- Vendored at: `icons/drive-floppy-525.png`,
+  `icons/drive-hard-disk-sasi.png`
+- Purpose: 5.25-inch floppy and 5 MB SASI hardware illustrations in the
+  drive-status panel
 
-The SVG path geometry and embedded attribution comments are retained. Only the
-fill color was changed to remain legible in the drive-status panel.
+These two original project assets were created with OpenAI image-generation
+tooling and locally processed into transparent PNGs. User-supplied historical
+photographs served as subject references. The hard-disk reference was captioned
+"Michael Holley - April 1982"; the source of the floppy-drive reference was not
+identified. No reference photograph itself is distributed with the emulator.
 
 ## Build and runtime libraries
 

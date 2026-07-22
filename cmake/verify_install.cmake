@@ -39,6 +39,7 @@ elseif(PLATFORM STREQUAL "windows")
     require_glob("Qt Core runtime" "${INSTALL_ROOT}/bin/Qt6Core.dll")
     require_glob("Windows platform plugin"
       "${INSTALL_ROOT}/bin/platforms/qwindows.dll"
+      "${INSTALL_ROOT}/plugins/platforms/qwindows.dll"
       "${INSTALL_ROOT}/share/qt6/plugins/platforms/qwindows.dll")
     require_glob("OpenAL runtime"
       "${INSTALL_ROOT}/bin/OpenAL32.dll"
@@ -96,7 +97,6 @@ require_file("${data_root}/licenses/THIRD_PARTY.md")
 require_file("${data_root}/licenses/README.md")
 require_file("${data_root}/licenses/third-party/LICENSE")
 require_file("${data_root}/licenses/third-party/LICENSE-MAME-SAMPLES.txt")
-require_file("${data_root}/licenses/third-party/LICENSE-FONT-AWESOME.txt")
 if(REQUIRE_RUNTIME)
   require_file("${data_root}/licenses/third-party/LICENSE-OPENAL-SOFT.txt")
 endif()

@@ -79,9 +79,8 @@ if(P2000C_BUILD_APP)
       "audio/525_step_1_1.wav"
       "audio/LICENSE-MAME-SAMPLES.txt"
       "font/P2000C font mini.png"
-      "icons/floppy-disk.svg"
-      "icons/hard-drive.svg"
-      "icons/LICENSE-FONT-AWESOME.txt"
+      "icons/drive-floppy-525.png"
+      "icons/drive-hard-disk-sasi.png"
       "logo/logo-p2000c.svg"
       "images/blank.hda"
       "images/chess.flp"
@@ -142,7 +141,6 @@ if(P2000C_BUILD_APP)
   install(FILES
       third_party/superzazu_z80/LICENSE
       audio/LICENSE-MAME-SAMPLES.txt
-      icons/LICENSE-FONT-AWESOME.txt
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
     COMPONENT application
   )
@@ -199,20 +197,29 @@ if(P2000C_BUILD_APP)
     )
   endif()
 
-  if(Qt6_VERSION VERSION_LESS 6.5)
-    qt_generate_deploy_app_script(
-      TARGET p2000c
-      FILENAME_VARIABLE p2000c_deploy_script
-      NO_UNSUPPORTED_PLATFORM_ERROR
-    )
+  if(APPLE)
+    # Qt 6.8.3 does not quote bundle names in its generated deploy script.
+    install(CODE "
+      include(\"${QT_DEPLOY_SUPPORT}\")
+      qt_deploy_runtime_dependencies(
+        EXECUTABLE \"$<TARGET_FILE_NAME:p2000c>.app\")
+    " COMPONENT application)
   else()
-    qt_generate_deploy_app_script(
-      TARGET p2000c
-      OUTPUT_SCRIPT p2000c_deploy_script
-      NO_UNSUPPORTED_PLATFORM_ERROR
-    )
+    if(Qt6_VERSION VERSION_LESS 6.5)
+      qt_generate_deploy_app_script(
+        TARGET p2000c
+        FILENAME_VARIABLE p2000c_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+      )
+    else()
+      qt_generate_deploy_app_script(
+        TARGET p2000c
+        OUTPUT_SCRIPT p2000c_deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+      )
+    endif()
+    install(SCRIPT "${p2000c_deploy_script}" COMPONENT application)
   endif()
-  install(SCRIPT "${p2000c_deploy_script}" COMPONENT application)
   if(WIN32)
     set(P2000C_WINDOWS_EXTRA_RUNTIME_DIRECTORY
         "$<TARGET_FILE_DIR:OpenAL::OpenAL>")
@@ -318,9 +325,8 @@ if(BUILD_TESTING)
         "audio/525_step_1_1.wav"
         "audio/LICENSE-MAME-SAMPLES.txt"
         "font/P2000C font mini.png"
-        "icons/floppy-disk.svg"
-        "icons/hard-drive.svg"
-        "icons/LICENSE-FONT-AWESOME.txt"
+        "icons/drive-floppy-525.png"
+        "icons/drive-hard-disk-sasi.png"
         "logo/logo-p2000c.svg"
         "images/blank.hda"
         "images/chess.flp"
