@@ -12,7 +12,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFrame>
-#include <QFontInfo>
+#include <QFontDatabase>
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
@@ -97,7 +97,7 @@ QPoint active_crt_point(const QImage& image, qreal x, qreal y) {
 /** Checks inverse cells and the four documented intensity levels in pixels. */
 bool validate_attribute_rendering() {
   p2000c::DisplayWidget display;
-  display.setFixedSize(560, 288);
+  display.setFixedSize(384, 288);
   display.set_cursor(0, 0, false);
   p2000c::CrtEffects effects = p2000c::DisplayWidget::default_crt_effects();
   effects.persistence = false;
@@ -168,7 +168,7 @@ bool validate_graphics_rendering() {
   };
   auto render = [](const p2000c::Terminal& terminal) {
     p2000c::DisplayWidget display;
-    display.setFixedSize(560, 288);
+    display.setFixedSize(384, 288);
     display.set_cursor(0, 0, false);
     p2000c::CrtEffects effects = p2000c::DisplayWidget::default_crt_effects();
     effects.persistence = false;
@@ -186,8 +186,8 @@ bool validate_graphics_rendering() {
   p2000c::Terminal medium;
   send(&medium, {0x1b, '5', 0x1b, 'D', 0x00, 0x00});
   const QImage medium_image = render(medium);
-  const QPoint medium_pixel = active_crt_point(medium_image, 57, 269);
-  const QPoint medium_blank = active_crt_point(medium_image, 72, 269);
+  const QPoint medium_pixel = active_crt_point(medium_image, 39, 269);
+  const QPoint medium_blank = active_crt_point(medium_image, 49, 269);
   const int medium_pixel_energy =
       area_energy(medium_image, medium_pixel.x(), medium_pixel.y());
   const int medium_blank_energy =
@@ -204,8 +204,8 @@ bool validate_graphics_rendering() {
   p2000c::Terminal high;
   send(&high, {0x1b, '3', 0x1b, 'D', 0xff, 0x01, 0xfb});
   const QImage high_image = render(high);
-  const QPoint high_pixel = active_crt_point(high_image, 503, 19);
-  const QPoint high_blank = active_crt_point(high_image, 488, 19);
+  const QPoint high_pixel = active_crt_point(high_image, 345, 19);
+  const QPoint high_blank = active_crt_point(high_image, 335, 19);
   const int high_pixel_energy =
       area_energy(high_image, high_pixel.x(), high_pixel.y());
   const int high_blank_energy =
@@ -233,7 +233,7 @@ bool validate_crt_effect_rendering() {
                       p2000c::Terminal::kAttributeIntensityHigh);
   auto render = [&](const p2000c::CrtEffects& effects) {
     p2000c::DisplayWidget display;
-    display.setFixedSize(1120, 576);
+    display.setFixedSize(768, 576);
     display.set_cursor(0, 0, false);
     display.set_crt_effects(effects);
     display.set_screen(lit_screen, lit_attributes);
@@ -298,7 +298,7 @@ bool validate_crt_effect_rendering() {
   }
 
   p2000c::DisplayWidget persistent_display;
-  persistent_display.setFixedSize(560, 288);
+  persistent_display.setFixedSize(384, 288);
   persistent_display.set_cursor(0, 0, false);
   p2000c::CrtEffects persistence = plain;
   persistence.persistence = true;
@@ -342,7 +342,7 @@ bool validate_crt_effect_rendering() {
   }
 
   p2000c::DisplayWidget stable_display;
-  stable_display.setFixedSize(560, 288);
+  stable_display.setFixedSize(384, 288);
   stable_display.set_cursor(0, 0, false);
   stable_display.set_crt_effects(persistence);
   stable_display.set_screen(lit_screen, lit_attributes);
@@ -486,7 +486,7 @@ int main(int argc, char* argv[]) {
 
   p2000c::MainWindow window;
   auto* display = window.findChild<p2000c::DisplayWidget*>();
-  QAction* resolution = find_action(&window, "840 x 432");
+  QAction* resolution = find_action(&window, "640 x 480");
   QAction* screen_color = find_action(&window, "Screen &Appearance...");
   QAction* screenshot = find_named_action(&window, "saveScreenshotAction");
   QAction* sound_volume =
@@ -752,7 +752,7 @@ int main(int argc, char* argv[]) {
   }
 
   resolution->trigger();
-  if (display->size() != QSize(840, 432)) {
+  if (display->size() != QSize(640, 480)) {
     std::cerr << "Fixed display resolution was not applied.\n";
     return 1;
   }
@@ -799,39 +799,70 @@ int main(int argc, char* argv[]) {
       drive_a_card != nullptr && drive_a_card->layout() != nullptr
           ? drive_a_card->layout()->itemAt(2)
           : nullptr;
-  if (drive_a_status == nullptr || drive_a_position == nullptr ||
-      drive_a_menu == nullptr ||
-      drive_a_current == nullptr || drive_panel == nullptr ||
-      drive_a_led == nullptr || drive_a_icon == nullptr ||
-      drive_a_icon->pixmap().isNull() || drive_a_card == nullptr ||
-      drive_a_card->frameShape() != QFrame::NoFrame ||
-      !drive_a_card->property("driveCard").toBool() ||
-      !drive_a_icon->property("driveTypeIcon").toBool() ||
-      drive_a_icon->size() != QSize(60, 60) ||
-      drive_a_icon->pixmap().size() != QSize(58, 58) ||
-      drive_a_text_item == nullptr || drive_a_text_item->layout() == nullptr ||
+  const bool drive_a_widgets_valid =
+      drive_a_status != nullptr && drive_a_position != nullptr &&
+      drive_a_menu != nullptr && drive_a_current != nullptr &&
+      drive_panel != nullptr && drive_a_led != nullptr &&
+      drive_a_icon != nullptr && drive_a_card != nullptr &&
+      drive_a_text_item != nullptr && drive_a_text_item->layout() != nullptr;
+  const bool drive_a_structure_valid =
+      drive_a_widgets_valid && !drive_a_icon->pixmap().isNull() &&
+      drive_a_card->frameShape() == QFrame::NoFrame &&
+      drive_a_card->property("driveCard").toBool() &&
+      drive_a_icon->property("driveTypeIcon").toBool() &&
+      drive_a_icon->size() == QSize(60, 60) &&
+      drive_a_icon->pixmap().size() == QSize(58, 58) &&
+      drive_a_icon->accessibleName().contains("hardware illustration") &&
+      drive_a_status->property("mediaFilename").toBool() &&
+      window.findChild<QWidget*>("floppyDriveASource") == nullptr;
+  const bool drive_a_layout_valid =
+      drive_a_widgets_valid &&
       std::abs(drive_a_led->geometry().center().y() -
-               drive_a_icon->geometry().center().y()) > 1 ||
+               drive_a_icon->geometry().center().y()) <= 1 &&
       std::abs(drive_a_text_item->geometry().center().y() -
-               drive_a_icon->geometry().center().y()) > 1 ||
-      !drive_a_icon->accessibleName().contains("hardware illustration") ||
-      !drive_a_status->property("mediaFilename").toBool() ||
-      !QFontInfo(drive_a_status->font()).fixedPitch() ||
-      window.palette().color(QPalette::Window) != QColor("#e8dcb3") ||
-      !qApp->styleSheet().contains(
-          "QFrame#driveActivityPanel {\n      background: #f5eac6;") ||
-      idle_led.isNull() ||
-      qGray(idle_led.pixel(9, 8)) <= qGray(idle_led.pixel(12, 12)) ||
-      idle_led.pixelColor(12, 12) == idle_led.pixelColor(0, 0) ||
-      drive_a_status->text() != "system_drive_a.flp *" ||
-      window.findChild<QWidget*>("floppyDriveASource") != nullptr ||
-      !drive_a_position->accessibleName().contains("Track") ||
-      !drive_a_position->accessibleName().contains("side") ||
-      !drive_a_status->toolTip().contains("bundled template") ||
-      !drive_a_status->toolTip().contains(system_path) ||
-      !drive_a_menu->title().contains("system_drive_a.flp") ||
-      !drive_a_current->isChecked() || !system->isChecked()) {
-    std::cerr << "Drive A media indicators did not show the mounted image.\n";
+               drive_a_icon->geometry().center().y()) <= 1;
+  const bool system_fixed_font_valid =
+      drive_a_widgets_valid &&
+      drive_a_status->font().family() ==
+          QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+  const bool idle_led_highlight_valid =
+      !idle_led.isNull() &&
+      qGray(idle_led.pixel(9, 8)) > qGray(idle_led.pixel(12, 12));
+  const bool idle_led_fill_valid =
+      !idle_led.isNull() &&
+      idle_led.pixelColor(12, 12) != idle_led.pixelColor(0, 0);
+  const bool drive_a_style_valid =
+      system_fixed_font_valid &&
+      window.palette().color(QPalette::Window) == QColor("#e8dcb3") &&
+      qApp->styleSheet().contains(
+          "QFrame#driveActivityPanel {\n      background: #f5eac6;") &&
+      idle_led_highlight_valid && idle_led_fill_valid;
+  const bool drive_a_media_valid =
+      drive_a_widgets_valid &&
+      drive_a_status->text() == "system_drive_a.flp *" &&
+      drive_a_position->accessibleName().contains("Track") &&
+      drive_a_position->accessibleName().contains("side") &&
+      drive_a_status->toolTip().contains("bundled template") &&
+      drive_a_status->toolTip().contains(system_path) &&
+      drive_a_menu->title().contains("system_drive_a.flp") &&
+      drive_a_current->isChecked() && system->isChecked();
+  if (!drive_a_structure_valid || !drive_a_layout_valid ||
+      !drive_a_style_valid || !drive_a_media_valid) {
+    std::cerr << "Drive A validation failed: widgets=" << drive_a_widgets_valid
+              << ", structure=" << drive_a_structure_valid
+              << ", layout=" << drive_a_layout_valid
+              << ", style=" << drive_a_style_valid
+              << ", media=" << drive_a_media_valid
+              << ", system-fixed-font=" << system_fixed_font_valid
+              << ", palette="
+              << (window.palette().color(QPalette::Window) ==
+                  QColor("#e8dcb3"))
+              << ", stylesheet="
+              << qApp->styleSheet().contains(
+                     "QFrame#driveActivityPanel {\n      background: #f5eac6;")
+              << ", led-highlight=" << idle_led_highlight_valid
+              << ", led-fill=" << idle_led_fill_valid
+              << ".\n";
     return 1;
   }
   drive_panel->grab().save(QDir(test_root).filePath("drive-panel-preview.png"));

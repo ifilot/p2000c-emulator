@@ -383,14 +383,14 @@ struct EmulationSpeed {
 };
 
 constexpr std::array<DisplayResolution, 5> kDisplayResolutions = {{
-    {"560 x 288 (Compact)", {560, 288}},
-    {"840 x 432", {840, 432}},
-    {"1120 x 576 (Recommended)", {1120, 576}},
-    {"1400 x 720", {1400, 720}},
-    {"1680 x 864", {1680, 864}},
+    {"512 x 384 (Compact)", {512, 384}},
+    {"640 x 480", {640, 480}},
+    {"768 x 576 (Recommended)", {768, 576}},
+    {"960 x 720", {960, 720}},
+    {"1152 x 864", {1152, 864}},
 }};
 
-constexpr QSize kDefaultDisplayResolution(1120, 576);
+constexpr QSize kDefaultDisplayResolution(768, 576);
 
 constexpr std::array<EmulationSpeed, 5> kEmulationSpeeds = {{
     {"1 MHz (25%)", 0.25},

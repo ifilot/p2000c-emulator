@@ -141,10 +141,11 @@ cell contain character-generator data; the other four columns are sheet
 spacing and are not part of the emulated display.
 
 Timing coordinates do not imply square physical dots on the 9-inch CRT. The Qt
-presentation uses a 7:8 horizontal-to-vertical dot pitch, calibrated from the
-6x7 lit-dot bounding box of `O` in the character data and the supplied monitor
-close-up. Contiguous dots on one scanline are rendered as a single rounded
-phosphor stroke. A subtractive gap mask keeps scanlines visible at common host
+presentation maps the 640x288 timing raster onto the tube's 4:3 display area,
+giving its dots a 3:5 horizontal-to-vertical pitch. This preserves all 80
+columns without presenting the physical screen as a modern widescreen.
+Contiguous dots on one scanline are rendered as a single rounded phosphor
+stroke. A subtractive gap mask keeps scanlines visible at common host
 resolutions, while low-alpha additive layers provide bloom without filling the
 gap. Brighter attributes produce a slightly wider beam.
 

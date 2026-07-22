@@ -195,7 +195,7 @@ void DisplayWidget::set_cursor(int column, int row, bool visible) {
   update();
 }
 
-QSize DisplayWidget::sizeHint() const { return {980, 504}; }
+QSize DisplayWidget::sizeHint() const { return {768, 576}; }
 
 QSize DisplayWidget::minimumSizeHint() const {
   return {kDisplayWidth, kDisplayHeight};

@@ -52,8 +52,10 @@ class DisplayWidget : public QWidget {
     static constexpr int kCharacterSheetPitch = 12;
     static constexpr int kTextRasterWidth = kColumns * kCharacterWidth;
     static constexpr int kTextRasterHeight = kRows * kCharacterHeight;
-    static constexpr int kDisplayWidth = kTextRasterWidth * 7 / 8;
     static constexpr int kDisplayHeight = kTextRasterHeight;
+    // The raster timings are mapped onto the P2000C's conventional 4:3 CRT;
+    // its 640 horizontal dots were not physically square pixels.
+    static constexpr int kDisplayWidth = kDisplayHeight * 4 / 3;
 
     struct RasterRun {
         int column = 0;
