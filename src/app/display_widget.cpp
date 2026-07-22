@@ -104,13 +104,25 @@ void DisplayWidget::set_base_color(const QColor& color) {
 }
 
 void DisplayWidget::set_crt_effects(const CrtEffects& effects) {
-  if (crt_effects_ == effects) {
+  CrtEffects normalized = effects;
+  normalized.persistence_half_life_ms = std::clamp(
+      normalized.persistence_half_life_ms,
+      CrtEffects::kMinimumPersistenceHalfLifeMs,
+      CrtEffects::kMaximumPersistenceHalfLifeMs);
+  if (crt_effects_ == normalized) {
     return;
   }
-  crt_effects_ = effects;
+  crt_effects_ = normalized;
   invalidate_emission(true);
   update_effect_timer();
   update();
+}
+
+QImage DisplayWidget::capture_screenshot() {
+  QImage screenshot(size(), QImage::Format_ARGB32_Premultiplied);
+  screenshot.fill(Qt::black);
+  render(&screenshot);
+  return screenshot;
 }
 
 void DisplayWidget::clear() {
@@ -474,7 +486,10 @@ const QImage& DisplayWidget::update_persistence(
   const qint64 elapsed = persistence_clock_.isValid()
                              ? persistence_clock_.restart()
                              : 0;
-  const qreal retained = std::pow(0.5, elapsed / 170.0);
+  const qreal retained =
+      std::pow(0.5, elapsed /
+                        static_cast<qreal>(
+                            crt_effects_.persistence_half_life_ms));
   QPainter persistence_painter(&persistence_layer_);
   persistence_painter.setCompositionMode(
       QPainter::CompositionMode_DestinationIn);

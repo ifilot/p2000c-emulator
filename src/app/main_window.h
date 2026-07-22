@@ -82,6 +82,9 @@ class MainWindow : public QMainWindow {
     /** Opens the persistent phosphor color settings panel. */
     void open_screen_color_settings();
 
+    /** Saves the complete rendered CRT display to a PNG image. */
+    void save_screenshot();
+
     /** Sets the wall-clock multiplier relative to the 4 MHz machine. */
     void set_emulation_speed(double multiplier);
 

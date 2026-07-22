@@ -11,6 +11,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QImage>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
@@ -203,6 +204,11 @@ bool validate_graphics_rendering() {
 
 /** Checks that scanline separation and temporal persistence are effective. */
 bool validate_crt_effect_rendering() {
+  if (p2000c::DisplayWidget::default_crt_effects()
+          .persistence_half_life_ms >= 170) {
+    std::cerr << "The default phosphor persistence was not shortened.\n";
+    return false;
+  }
   p2000c::Terminal::Screen lit_screen;
   lit_screen.fill(0x20);
   p2000c::Terminal::AttributeScreen lit_attributes;
@@ -328,20 +334,34 @@ int main(int argc, char* argv[]) {
   settings.setValue("display/effects/curvature", false);
   settings.setValue("display/effects/vignette", false);
   settings.setValue("display/effects/noise", true);
+  settings.setValue("display/effects/persistenceHalfLifeMs", 95);
 
   p2000c::MainWindow window;
   auto* display = window.findChild<p2000c::DisplayWidget*>();
   QAction* resolution = find_action(&window, "840 x 432");
   QAction* screen_color = find_action(&window, "Screen &Appearance...");
-  if (display == nullptr || resolution == nullptr || screen_color == nullptr) {
+  QAction* screenshot = find_named_action(&window, "saveScreenshotAction");
+  if (display == nullptr || resolution == nullptr || screen_color == nullptr ||
+      screenshot == nullptr ||
+      screenshot->shortcut() != QKeySequence(Qt::CTRL | Qt::SHIFT |
+                                             Qt::Key_S)) {
     return 1;
   }
   const p2000c::CrtEffects saved_effects = display->crt_effects();
   if (display->base_color() != saved_color || saved_effects.scanlines ||
       saved_effects.bloom || saved_effects.persistence ||
       saved_effects.curvature || saved_effects.vignette ||
-      !saved_effects.noise) {
+      !saved_effects.noise || saved_effects.persistence_half_life_ms != 95) {
     std::cerr << "Saved screen appearance was not restored.\n";
+    return 1;
+  }
+
+  const QImage captured = display->capture_screenshot();
+  const QString screenshot_path = QDir(argv[1]).filePath("crt-screenshot.png");
+  if (captured.isNull() || captured.size() != display->size() ||
+      !captured.save(screenshot_path, "PNG") ||
+      QImage(screenshot_path).size() != display->size()) {
+    std::cerr << "CRT screenshot capture did not produce a valid PNG.\n";
     return 1;
   }
 
@@ -355,11 +375,17 @@ int main(int argc, char* argv[]) {
         dialog != nullptr
             ? dialog->findChild<QCheckBox*>("screenNoiseCheckBox")
             : nullptr;
+    auto* persistence_half_life =
+        dialog != nullptr
+            ? dialog->findChild<QSlider*>("screenPersistenceHalfLifeSlider")
+            : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("screenColorButtons")
             : nullptr;
-    if (buttons == nullptr || scanlines == nullptr || noise == nullptr) {
+    if (buttons == nullptr || scanlines == nullptr || noise == nullptr ||
+        persistence_half_life == nullptr ||
+        persistence_half_life->value() != 95) {
       if (dialog != nullptr) {
         dialog->reject();
       }
@@ -378,7 +404,9 @@ int main(int argc, char* argv[]) {
       settings.value("display/effects/scanlines").toBool() !=
           default_effects.scanlines ||
       settings.value("display/effects/noise").toBool() !=
-          default_effects.noise) {
+          default_effects.noise ||
+      settings.value("display/effects/persistenceHalfLifeMs").toInt() !=
+          default_effects.persistence_half_life_ms) {
     std::cerr << "Accepted screen appearance was not applied and persisted.\n";
     return 1;
   }
@@ -401,6 +429,10 @@ int main(int argc, char* argv[]) {
         dialog != nullptr
             ? dialog->findChild<QCheckBox*>("screenScanlinesCheckBox")
             : nullptr;
+    auto* persistence_half_life =
+        dialog != nullptr
+            ? dialog->findChild<QSlider*>("screenPersistenceHalfLifeSlider")
+            : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("screenColorButtons")
@@ -410,6 +442,10 @@ int main(int argc, char* argv[]) {
     }
     if (scanlines != nullptr) {
       scanlines->setChecked(false);
+    }
+    if (persistence_half_life != nullptr) {
+      persistence_half_life->setValue(
+          p2000c::CrtEffects::kMaximumPersistenceHalfLifeMs);
     }
     if (buttons != nullptr) {
       buttons->button(QDialogButtonBox::Cancel)->click();
@@ -422,7 +458,9 @@ int main(int argc, char* argv[]) {
       display->crt_effects() != default_effects ||
       settings.value("display/baseColor").value<QColor>() != default_color ||
       settings.value("display/effects/scanlines").toBool() !=
-          default_effects.scanlines) {
+          default_effects.scanlines ||
+      settings.value("display/effects/persistenceHalfLifeMs").toInt() !=
+          default_effects.persistence_half_life_ms) {
     std::cerr << "Cancel did not restore the prior screen appearance.\n";
     return 1;
   }

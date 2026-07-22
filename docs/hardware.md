@@ -150,9 +150,11 @@ gap. Brighter attributes produce a slightly wider beam.
 
 The current emission image is cached separately from the glass/background.
 Optional after-effects apply a two-axis barrel warp, exponentially decaying
-phosphor persistence (170 ms half-life), edge shading and a faint glass
-highlight, or animated monochrome noise. Each effect can be previewed and
-persisted independently through **Settings > Screen Appearance...**. The
+phosphor persistence (60 ms default half-life, adjustable from 20 to 250 ms),
+edge shading and a faint glass highlight, or animated monochrome noise. Each
+effect can be previewed and persisted independently through **Settings > Screen
+Appearance...**. The complete rendered CRT can also be captured as a PNG via
+**View > Save Screenshot...**. The
 monitor service instructions specify a 15.67 kHz horizontal frequency, but the
 emulator does not simulate individual beam sweeps; temporal effects are updated
 at approximately 30 Hz and presented at the host compositor's refresh rate.

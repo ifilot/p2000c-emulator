@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -10,6 +11,7 @@
 #include <QFont>
 #include <QFrame>
 #include <QLabel>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -68,6 +70,10 @@ CrtEffects load_crt_effects(const QSettings& settings) {
       settings.value("display/effects/curvature", defaults.curvature).toBool(),
       settings.value("display/effects/vignette", defaults.vignette).toBool(),
       settings.value("display/effects/noise", defaults.noise).toBool(),
+      settings
+          .value("display/effects/persistenceHalfLifeMs",
+                 defaults.persistence_half_life_ms)
+          .toInt(),
   };
 }
 
@@ -79,6 +85,8 @@ void save_crt_effects(QSettings* settings, const CrtEffects& effects) {
   settings->setValue("display/effects/curvature", effects.curvature);
   settings->setValue("display/effects/vignette", effects.vignette);
   settings->setValue("display/effects/noise", effects.noise);
+  settings->setValue("display/effects/persistenceHalfLifeMs",
+                     effects.persistence_half_life_ms);
 }
 
 /** Converts a QString to a Unicode-aware host filesystem path. */
@@ -471,6 +479,11 @@ void MainWindow::create_menus() {
             [this, size = resolution.size]() { set_display_resolution(size); });
   }
   set_display_resolution(selected_resolution);
+  view_menu->addSeparator();
+  QAction* screenshot = view_menu->addAction("Save &Screenshot...");
+  screenshot->setObjectName("saveScreenshotAction");
+  screenshot->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+  connect(screenshot, &QAction::triggered, this, &MainWindow::save_screenshot);
 
   QMenu* settings_menu = menuBar()->addMenu("&Settings");
   QAction* screen_color = settings_menu->addAction("Screen &Appearance...");
@@ -812,6 +825,31 @@ void MainWindow::open_screen_color_settings() {
   } else {
     display_->set_base_color(original_color);
     display_->set_crt_effects(original_effects);
+  }
+  display_->setFocus();
+}
+
+void MainWindow::save_screenshot() {
+  const QString pictures =
+      QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+  const QString filename =
+      "p2000c-" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") +
+      ".png";
+  QString path = QFileDialog::getSaveFileName(
+      this, "Save CRT Screenshot", QDir(pictures).filePath(filename),
+      "PNG images (*.png)");
+  if (path.isEmpty()) {
+    display_->setFocus();
+    return;
+  }
+  if (QFileInfo(path).suffix().isEmpty()) {
+    path += ".png";
+  }
+  if (!display_->capture_screenshot().save(path, "PNG")) {
+    QMessageBox::critical(this, "Cannot Save Screenshot",
+                          "The screenshot could not be written to:\n" + path);
+  } else {
+    statusBar()->showMessage("Screenshot saved: " + path, 5000);
   }
   display_->setFocus();
 }

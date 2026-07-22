@@ -265,19 +265,42 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
       "Adds edge darkening and a faint highlight from the monitor glass.");
   noise_->setToolTip(
       "Adds a very small amount of animated monochrome video noise.");
+  persistence_half_life_label_ = new QLabel(effects_group);
+  persistence_half_life_label_->setObjectName(
+      "screenPersistenceHalfLifeLabel");
+  persistence_half_life_ = new QSlider(Qt::Horizontal, effects_group);
+  persistence_half_life_->setObjectName("screenPersistenceHalfLifeSlider");
+  persistence_half_life_->setRange(CrtEffects::kMinimumPersistenceHalfLifeMs,
+                                   CrtEffects::kMaximumPersistenceHalfLifeMs);
+  persistence_half_life_->setSingleStep(5);
+  persistence_half_life_->setPageStep(20);
+  persistence_half_life_->setAccessibleName("Phosphor persistence half-life");
+  persistence_half_life_->setToolTip(
+      "Controls how quickly an extinguished phosphor trace fades. Shorter "
+      "times look crisper; longer times leave a more visible trail.");
+  effects_layout->addWidget(persistence_half_life_label_, 3, 0);
+  effects_layout->addWidget(persistence_half_life_, 3, 1);
   select_effects(selected_effects_);
   auto effects_changed = [this]() {
     selected_effects_ = {
         scanlines_->isChecked(), bloom_->isChecked(),
         persistence_->isChecked(), curvature_->isChecked(),
         vignette_->isChecked(),   noise_->isChecked(),
+        persistence_half_life_->value(),
     };
+    persistence_half_life_->setEnabled(persistence_->isChecked());
+    persistence_half_life_label_->setEnabled(persistence_->isChecked());
+    persistence_half_life_label_->setText(
+        QString("Persistence half-life: %1 ms")
+            .arg(persistence_half_life_->value()));
     update_preview();
   };
   for (QCheckBox* effect : {scanlines_, bloom_, persistence_, curvature_,
                             vignette_, noise_}) {
     connect(effect, &QCheckBox::toggled, this, effects_changed);
   }
+  connect(persistence_half_life_, &QSlider::valueChanged, this,
+          effects_changed);
   layout->addWidget(effects_group);
 
   auto* buttons =
@@ -316,6 +339,15 @@ void ScreenColorDialog::select_effects(const CrtEffects& effects) {
   curvature_->setChecked(effects.curvature);
   vignette_->setChecked(effects.vignette);
   noise_->setChecked(effects.noise);
+  persistence_half_life_->setValue(std::clamp(
+      effects.persistence_half_life_ms,
+      CrtEffects::kMinimumPersistenceHalfLifeMs,
+      CrtEffects::kMaximumPersistenceHalfLifeMs));
+  persistence_half_life_->setEnabled(effects.persistence);
+  persistence_half_life_label_->setEnabled(effects.persistence);
+  persistence_half_life_label_->setText(
+      QString("Persistence half-life: %1 ms")
+          .arg(persistence_half_life_->value()));
   update_preview();
 }
 

@@ -20,12 +20,17 @@ namespace p2000c {
 
 /** Independently selectable optical effects applied after raster generation. */
 struct CrtEffects {
+    static constexpr int kMinimumPersistenceHalfLifeMs = 20;
+    static constexpr int kMaximumPersistenceHalfLifeMs = 250;
+    static constexpr int kDefaultPersistenceHalfLifeMs = 60;
+
     bool scanlines = true;
     bool bloom = true;
     bool persistence = true;
     bool curvature = true;
     bool vignette = true;
     bool noise = false;
+    int persistence_half_life_ms = kDefaultPersistenceHalfLifeMs;
 
     bool operator==(const CrtEffects&) const = default;
 };
@@ -71,6 +76,9 @@ class DisplayWidget : public QWidget {
 
     /** Returns the current optical-effect selection. */
     const CrtEffects& crt_effects() const { return crt_effects_; }
+
+    /** Captures the complete currently rendered CRT presentation. */
+    QImage capture_screenshot();
 
     /** Clears the emulated screen to spaces. */
     void clear();

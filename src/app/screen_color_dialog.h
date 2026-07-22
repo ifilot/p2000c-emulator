@@ -70,6 +70,8 @@ class ScreenColorDialog : public QDialog {
     QCheckBox* curvature_ = nullptr;
     QCheckBox* vignette_ = nullptr;
     QCheckBox* noise_ = nullptr;
+    QSlider* persistence_half_life_ = nullptr;
+    QLabel* persistence_half_life_label_ = nullptr;
     QColor selected_color_;
     CrtEffects selected_effects_;
     std::function<void(const QColor&, const CrtEffects&)> preview_handler_;
