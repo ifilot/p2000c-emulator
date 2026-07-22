@@ -8,6 +8,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,10 +23,63 @@ void print_screen(const p2000c::P2000cMachine& machine) {
   }
 }
 
+/** Converts raw physical floppy sectors back to the CP/M logical byte order. */
+std::vector<std::uint8_t> logical_floppy(
+    const p2000c::RawDiskImage& image) {
+  constexpr std::array<std::uint8_t, 16> kInterleave = {
+      0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15};
+  std::vector<std::uint8_t> logical(p2000c::RawDiskImage::kFloppySize);
+  constexpr std::size_t kTrackSize = 16 * 256;
+  for (std::size_t track = 0; track < 160; ++track) {
+    for (std::size_t sector = 0; sector < kInterleave.size(); ++sector) {
+      const std::span<const std::uint8_t> physical = image.floppy_sector(
+          static_cast<std::uint8_t>(track / 2),
+          static_cast<std::uint8_t>(track % 2), kInterleave[sector] + 1);
+      std::copy(physical.begin(), physical.end(),
+                logical.begin() + track * kTrackSize + sector * 256);
+    }
+  }
+  return logical;
+}
+
+/** Extracts one single-extent file from the confirmed 640 KiB CP/M layout. */
+std::optional<std::vector<std::uint8_t>> extract_small_cpm_file(
+    const p2000c::RawDiskImage& image, const std::string& name,
+    const std::string& extension) {
+  constexpr std::size_t kDirectoryOffset = 8192;
+  constexpr std::size_t kDirectoryEntries = 128;
+  constexpr std::size_t kBlockSize = 4096;
+  const std::vector<std::uint8_t> logical = logical_floppy(image);
+  for (std::size_t index = 0; index < kDirectoryEntries; ++index) {
+    const std::size_t offset = kDirectoryOffset + index * 32;
+    const std::span<const std::uint8_t> entry(logical.data() + offset, 32);
+    if (entry[0] != 0 ||
+        std::string(entry.begin() + 1, entry.begin() + 9) != name ||
+        std::string(entry.begin() + 9, entry.begin() + 12) != extension ||
+        entry[12] != 0 || entry[14] != 0) {
+      continue;
+    }
+    const std::size_t byte_count = entry[15] * 128;
+    const std::size_t block_count =
+        (byte_count + kBlockSize - 1) / kBlockSize;
+    std::vector<std::uint8_t> data;
+    data.reserve(block_count * kBlockSize);
+    for (std::size_t block = 0; block < block_count; ++block) {
+      const std::size_t source =
+          kDirectoryOffset + entry[16 + block] * kBlockSize;
+      data.insert(data.end(), logical.begin() + source,
+                  logical.begin() + source + kBlockSize);
+    }
+    data.resize(byte_count);
+    return data;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  if (argc != 3) {
+  if (argc != 7) {
     return 2;
   }
   p2000c::P2000cMachine machine;
@@ -187,7 +241,9 @@ int main(int argc, char* argv[]) {
   p2000c::P2000cMachine boot_machine;
   if (!boot_machine.load_ipl_rom(argv[1], &error) ||
       !boot_machine.mount_floppy_a(argv[2], &error) ||
-      !boot_machine.mount_floppy_b(argv[2], &error)) {
+      !boot_machine.mount_floppy_b(argv[2], &error) ||
+      !boot_machine.mount_hard_disk(0, argv[6], &error) ||
+      !boot_machine.mount_hard_disk(1, argv[6], &error)) {
     std::cerr << error << '\n';
     return 1;
   }
@@ -209,7 +265,17 @@ int main(int argc, char* argv[]) {
   boot_machine.run_for(20'000'000);
   const auto& command_screen = boot_machine.terminal().screen();
   const std::string command_text(command_screen.begin(), command_screen.end());
-  if (command_text.find("CPM61") == std::string::npos ||
+  constexpr std::array<const char*, 16> kCoreDirectory = {
+      "CPM61    COM", "CPM62    COM", "CPM63    COM", "CBIOS61  COM",
+      "CBIOS62  COM", "CBIOS63  COM", "CONFIG   COM", "CONFIG   DAT",
+      "CONFIG   MSG", "SYSGEN   COM", "STAT     COM", "PIP      COM",
+      "DDT      COM", "ED       COM", "ASM      COM", "LOAD     COM"};
+  const bool complete_directory =
+      std::all_of(kCoreDirectory.begin(), kCoreDirectory.end(),
+                  [&](const char* filename) {
+                    return command_text.find(filename) != std::string::npos;
+                  });
+  if (!complete_directory || command_text.find(":   :   :") != std::string::npos ||
       command_text.find("A>") == std::string::npos) {
     std::cerr << "CP/M did not execute a keyboard-driven DIR command; PC="
               << std::hex << boot_machine.program_counter()
@@ -232,35 +298,145 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  for (const char key : std::string("A:\rUTIL\r")) {
+  for (const char key : std::string("C:\rDIR\rD:\rDIR\rE:\rDIR\rF:\rDIR\r")) {
     boot_machine.queue_key(static_cast<std::uint8_t>(key));
   }
-  boot_machine.run_for(60'000'000);
-  const auto& util_screen = boot_machine.terminal().screen();
-  const auto& util_attributes = boot_machine.terminal().attributes();
-  const std::string util_first_line(util_screen.begin(),
-                                    util_screen.begin() + 80);
-  const auto inverted_on_first_line = std::count_if(
-      util_attributes.begin(), util_attributes.begin() + 80,
-      [](std::uint8_t attribute) {
-        return (attribute & p2000c::Terminal::kAttributeInverse) != 0;
-      });
-  if (util_first_line.find("UTIL") == std::string::npos ||
-      inverted_on_first_line < 40) {
-    std::cerr << "UTIL did not produce its inverted heading; "
-              << "inverted first-line cells=" << inverted_on_first_line << '\n';
+  boot_machine.run_for(100'000'000);
+  const auto& hard_drive_screen = boot_machine.terminal().screen();
+  const std::string hard_drive_text(hard_drive_screen.begin(),
+                                    hard_drive_screen.end());
+  if (hard_drive_text.find("F>") == std::string::npos ||
+      hard_drive_text.find("Bdos Err") != std::string::npos) {
+    std::cerr << "CP/M did not access all four hard-disk volumes.\n";
     print_screen(boot_machine);
+    return 1;
+  }
+
+  p2000c::P2000cMachine ddt_machine;
+  if (!ddt_machine.load_ipl_rom(argv[1], &error) ||
+      !ddt_machine.mount_floppy_a(argv[2], &error)) {
+    std::cerr << error << '\n';
+    return 1;
+  }
+  ddt_machine.run_for(20'000'000);
+  for (const char key : std::string("DDT\r")) {
+    ddt_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  ddt_machine.run_for(40'000'000);
+  const auto& ddt_screen = ddt_machine.terminal().screen();
+  const std::string ddt_text(ddt_screen.begin(), ddt_screen.end());
+  const std::size_t ddt_banner = ddt_text.find("DDT VERS 2.2");
+  const std::size_t ddt_prompt =
+      ddt_banner == std::string::npos ? std::string::npos
+                                      : ddt_text.find('-', ddt_banner);
+  if (ddt_banner == std::string::npos || ddt_prompt == std::string::npos ||
+      ddt_text.find("DDT VERS 2.2", ddt_banner + 1) != std::string::npos ||
+      ddt_text.find('-', ddt_prompt + 1) != std::string::npos ||
+      ddt_machine.terminal().cursor_column() != 1) {
+    std::cerr << "DDT.COM did not reach its command prompt.\n";
+    print_screen(ddt_machine);
+    return 1;
+  }
+
+  const std::filesystem::path compilation_floppy =
+      std::filesystem::temp_directory_path() /
+      ("p2000c-ipldump-test-" + std::to_string(unique_suffix) + ".flp");
+  std::filesystem::copy_file(argv[5], compilation_floppy,
+                             std::filesystem::copy_options::overwrite_existing);
+  p2000c::P2000cMachine compilation_machine;
+  if (!compilation_machine.load_ipl_rom(argv[1], &error) ||
+      !compilation_machine.mount_floppy_a(argv[2], &error) ||
+      !compilation_machine.mount_floppy_b(compilation_floppy, &error)) {
+    std::cerr << error << '\n';
+    std::filesystem::remove(compilation_floppy);
+    return 1;
+  }
+  compilation_machine.run_for(20'000'000);
+  for (const char key : std::string("B:\rASM IPLDUMP\r")) {
+    compilation_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  compilation_machine.run_for(300'000'000);
+  const std::string assembler_text(
+      compilation_machine.terminal().screen().begin(),
+      compilation_machine.terminal().screen().end());
+  if (assembler_text.find("END OF ASSEMBLY") == std::string::npos ||
+      assembler_text.find("ERROR") != std::string::npos) {
+    std::cerr << "ASM.COM did not assemble IPLDUMP.ASM successfully.\n";
+    print_screen(compilation_machine);
+    std::filesystem::remove(compilation_floppy);
+    return 1;
+  }
+  for (const char key : std::string("LOAD IPLDUMP\r")) {
+    compilation_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  compilation_machine.run_for(100'000'000);
+  const std::string loader_text(
+      compilation_machine.terminal().screen().begin(),
+      compilation_machine.terminal().screen().end());
+  if (loader_text.find("FIRST ADDRESS") == std::string::npos ||
+      loader_text.find("BYTES READ") == std::string::npos) {
+    std::cerr << "LOAD.COM did not create IPLDUMP.COM.\n";
+    print_screen(compilation_machine);
+    std::filesystem::remove(compilation_floppy);
+    return 1;
+  }
+  for (const char key : std::string("IPLDUMP\r")) {
+    compilation_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  compilation_machine.run_for(100'000'000);
+  const std::string dumper_text(
+      compilation_machine.terminal().screen().begin(),
+      compilation_machine.terminal().screen().end());
+  if (dumper_text.find("IPLDUMP.BIN CREATED (4096 BYTES).") ==
+      std::string::npos) {
+    std::cerr << "The assembled IPL dumper did not complete.\n";
+    print_screen(compilation_machine);
+    std::filesystem::remove(compilation_floppy);
+    return 1;
+  }
+  const auto dumped_rom = extract_small_cpm_file(
+      *compilation_machine.floppy_b(), "IPLDUMP ", "BIN");
+  std::ifstream expected_rom_file(argv[1], std::ios::binary);
+  std::vector<std::uint8_t> expected_rom(4096);
+  expected_rom_file.read(reinterpret_cast<char*>(expected_rom.data()),
+                         static_cast<std::streamsize>(expected_rom.size()));
+  std::filesystem::remove(compilation_floppy);
+  if (expected_rom_file.gcount() !=
+          static_cast<std::streamsize>(expected_rom.size()) ||
+      !dumped_rom.has_value() || *dumped_rom != expected_rom) {
+    std::cerr << "IPLDUMP.BIN did not exactly match the mapped IPL ROM.\n";
+    return 1;
+  }
+
+  p2000c::P2000cMachine zork_machine;
+  if (!zork_machine.load_ipl_rom(argv[1], &error) ||
+      !zork_machine.mount_floppy_a(argv[2], &error) ||
+      !zork_machine.mount_floppy_b(argv[3], &error)) {
+    std::cerr << error << '\n';
+    return 1;
+  }
+  zork_machine.run_for(20'000'000);
+  for (const char key : std::string("B:\rZORK1\r")) {
+    zork_machine.queue_key(static_cast<std::uint8_t>(key));
+  }
+  zork_machine.run_for(100'000'000);
+  const auto& zork_screen = zork_machine.terminal().screen();
+  const std::string zork_text(zork_screen.begin(), zork_screen.end());
+  if (zork_text.find("West of House") == std::string::npos) {
+    std::cerr << "ZORK1 did not load its data and reach the opening scene.\n";
+    print_screen(zork_machine);
     return 1;
   }
 
   p2000c::P2000cMachine chess_machine;
   if (!chess_machine.load_ipl_rom(argv[1], &error) ||
-      !chess_machine.mount_floppy_a(argv[2], &error)) {
+      !chess_machine.mount_floppy_a(argv[2], &error) ||
+      !chess_machine.mount_floppy_b(argv[4], &error)) {
     std::cerr << error << '\n';
     return 1;
   }
   chess_machine.run_for(20'000'000);
-  for (const char key : std::string("CHESS\r")) {
+  for (const char key : std::string("B:\rCHESS\r")) {
     chess_machine.queue_key(static_cast<std::uint8_t>(key));
   }
   chess_machine.run_for(80'000'000);
@@ -277,5 +453,6 @@ int main(int argc, char* argv[]) {
     print_screen(chess_machine);
     return 1;
   }
+
   return 0;
 }

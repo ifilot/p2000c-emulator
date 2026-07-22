@@ -82,7 +82,8 @@ bool P2000cMachine::mount_floppy_b(const std::filesystem::path& path,
 bool P2000cMachine::mount_floppy(std::size_t drive,
                                  const std::filesystem::path& path,
                                  std::string* error) {
-  std::optional<ImdImage> image = ImdImage::open(path, error);
+  std::optional<RawDiskImage> image =
+      RawDiskImage::open(path, RawDiskImage::Kind::kFloppy, error);
   if (!image.has_value()) {
     return false;
   }
@@ -90,7 +91,23 @@ bool P2000cMachine::mount_floppy(std::size_t drive,
   return true;
 }
 
-const ImdImage* P2000cMachine::floppy_drive(std::uint8_t drive) const {
+bool P2000cMachine::mount_hard_disk(std::size_t drive,
+                                    const std::filesystem::path& path,
+                                    std::string* error) {
+  if (drive >= hard_disks_.size()) {
+    set_error(error, "The P2000C supports two physical SASI hard disks.");
+    return false;
+  }
+  std::optional<RawDiskImage> image =
+      RawDiskImage::open(path, RawDiskImage::Kind::kHardDisk, error);
+  if (!image.has_value()) {
+    return false;
+  }
+  hard_disks_[drive] = std::move(*image);
+  return true;
+}
+
+const RawDiskImage* P2000cMachine::floppy_drive(std::uint8_t drive) const {
   if (drive >= floppy_drives_.size() || !floppy_drives_[drive].has_value()) {
     return nullptr;
   }
@@ -104,7 +121,7 @@ void P2000cMachine::reset() {
   cpu_->port_in = &P2000cMachine::cpu_port_in;
   cpu_->port_out = &P2000cMachine::cpu_port_out;
   cpu_->userdata = this;
-  rom_overlay_enabled_ = true;
+  memory_manager_ = 0;
   terminal_.reset();
   dma_channels_.fill({});
   interrupt_queue_.clear();
@@ -123,6 +140,10 @@ void P2000cMachine::reset() {
   fdc_sense_status_ = 0xc0;
   fdc_tracks_.fill(0);
   fdc_sense_track_ = 0;
+  sasi_phase_ = SasiPhase::kBusFree;
+  sasi_command_.fill(0);
+  sasi_command_length_ = 0;
+  sasi_status_ = 0;
   sio_b_register_ = 0;
   sio_b_receive_byte_ = 0;
   sio_b_receive_ready_ = false;
@@ -152,7 +173,7 @@ std::uint16_t P2000cMachine::program_counter() const { return cpu_->pc; }
 std::uint64_t P2000cMachine::cycles() const { return total_cycles_; }
 
 std::uint8_t P2000cMachine::read_memory(std::uint16_t address) const {
-  if (rom_overlay_enabled_ && address < kIplRomSize) {
+  if (memory_manager_ == 0 && address < kIplRomSize) {
     return ipl_rom_[address];
   }
   return ram_[address];
@@ -182,9 +203,11 @@ std::uint8_t P2000cMachine::cpu_port_in(z80* cpu, std::uint8_t port) {
     case 0x15:
       return 0x85;
     case 0x16:
-      return 0xff;
+    case 0x17:
+      return machine->read_sasi_data();
     case 0x18:
-      return 0x00;
+    case 0x19:
+      return machine->read_sasi_control();
     case 0x1a:
       return machine->fdc_status();
     case 0x1b:
@@ -215,13 +238,19 @@ void P2000cMachine::cpu_port_out(z80* cpu, std::uint8_t port,
     return;
   }
   switch (port) {
+    case 0x16:
+    case 0x17:
+      machine->write_sasi_data(value);
+      break;
     case 0x18:
+    case 0x19:
+      machine->write_sasi_control(value);
       break;
     case 0x1b:
       machine->write_fdc(value);
       break;
     case 0x1e:
-      machine->rom_overlay_enabled_ = (value & 0x03) != 0x02;
+      machine->write_memory_manager(value);
       break;
     case 0x1f: {
       const bool was_released = (machine->fdc_output_ & 0x10) != 0;
@@ -242,6 +271,12 @@ void P2000cMachine::cpu_port_out(z80* cpu, std::uint8_t port,
     default:
       break;
   }
+}
+
+void P2000cMachine::write_memory_manager(std::uint8_t value) {
+  // The manual defines MM2:MM1=00 as the IPL overlay and 10 as internal RAM.
+  // Writes always reach the underlying RAM, including while ROM is visible.
+  memory_manager_ = value & 0x03;
 }
 
 void P2000cMachine::update_devices() {
@@ -339,6 +374,24 @@ bool P2000cMachine::run_floppy_dma(std::span<const std::uint8_t> data) {
   return true;
 }
 
+std::optional<std::vector<std::uint8_t>> P2000cMachine::take_disk_dma() {
+  if ((dma_mode_ & 0x01) == 0) {
+    return std::nullopt;
+  }
+  DmaChannel& channel = dma_channels_[0];
+  const std::size_t length = (channel.count & 0x3fff) + 1;
+  std::vector<std::uint8_t> data;
+  data.reserve(length);
+  for (std::size_t index = 0; index < length; ++index) {
+    data.push_back(read_memory(channel.address++));
+  }
+  channel.count = 0x3fff;
+  dma_mode_ &= ~0x01;
+  dma_status_ |= 0x01;
+  request_interrupt(0xd6);
+  return data;
+}
+
 std::uint8_t P2000cMachine::fdc_status() const {
   if (!fdc_reset_released_) {
     return 0;
@@ -370,7 +423,7 @@ void P2000cMachine::complete_fdc_command() {
   }
   if (command == 0x07 || command == 0x0f) {
     const std::uint8_t drive = fdc_command_[1] & 0x03;
-    const ImdImage* image = floppy_drive(drive);
+    const RawDiskImage* image = floppy_drive(drive);
     if (drive < fdc_tracks_.size()) {
       fdc_tracks_[drive] = command == 0x0f ? fdc_command_[2] : 0;
       fdc_sense_track_ = fdc_tracks_[drive];
@@ -392,24 +445,76 @@ void P2000cMachine::complete_fdc_command() {
     const std::uint8_t first_sector = fdc_command_[4];
     const std::uint8_t size_code = fdc_command_[5];
     const std::uint8_t last_sector = fdc_command_[6];
+    const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
+    const std::uint8_t result_sector = static_cast<std::uint8_t>(
+        std::min<std::size_t>(last_sector,
+                              first_sector +
+                                  (dma_length + RawDiskImage::kSectorSize - 1) /
+                                      RawDiskImage::kSectorSize -
+                                  1));
     std::vector<std::uint8_t> track_data;
-    const ImdImage* image = floppy_drive(drive);
+    const RawDiskImage* image = floppy_drive(drive);
     bool media_ok = image != nullptr;
     for (std::uint16_t id = first_sector; media_ok && id <= last_sector; ++id) {
-      const ImdSector* sector =
-          image->find_sector(cylinder, head, static_cast<std::uint8_t>(id));
-      if (sector == nullptr || sector->data.empty()) {
+      const std::span<const std::uint8_t> sector =
+          image->floppy_sector(cylinder, head, static_cast<std::uint8_t>(id));
+      if (sector.empty()) {
         media_ok = false;
       } else {
-        track_data.insert(track_data.end(), sector->data.begin(),
-                          sector->data.end());
+        track_data.insert(track_data.end(), sector.begin(), sector.end());
       }
     }
     media_ok = media_ok && run_floppy_dma(track_data);
     if (media_ok) {
       fdc_result_.insert(fdc_result_.end(),
                          {static_cast<std::uint8_t>((head << 2) | drive), 0, 0,
-                          cylinder, head, last_sector, size_code});
+                          cylinder, head, result_sector, size_code});
+    } else {
+      fdc_result_.insert(fdc_result_.end(),
+                         {static_cast<std::uint8_t>(0x48 | (head << 2) | drive),
+                          0x04, 0, cylinder, head, first_sector, size_code});
+    }
+    request_interrupt(0xde);
+    return;
+  }
+
+  if (command == 0x05 && fdc_command_.size() == 9) {
+    const std::uint8_t drive = fdc_command_[1] & 0x03;
+    const std::uint8_t cylinder = fdc_command_[2];
+    const std::uint8_t head = fdc_command_[3];
+    const std::uint8_t first_sector = fdc_command_[4];
+    const std::uint8_t size_code = fdc_command_[5];
+    const std::uint8_t last_sector = fdc_command_[6];
+    const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
+    const std::uint8_t result_sector = static_cast<std::uint8_t>(
+        std::min<std::size_t>(last_sector,
+                              first_sector +
+                                  (dma_length + RawDiskImage::kSectorSize - 1) /
+                                      RawDiskImage::kSectorSize -
+                                  1));
+    RawDiskImage* image =
+        drive < floppy_drives_.size() && floppy_drives_[drive].has_value()
+            ? &*floppy_drives_[drive]
+            : nullptr;
+    std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
+    const std::size_t sectors = data.has_value()
+                                    ? data->size() / RawDiskImage::kSectorSize
+                                    : 0;
+    bool media_ok = image != nullptr && data.has_value() && sectors != 0 &&
+                    data->size() % RawDiskImage::kSectorSize == 0 &&
+                    first_sector + sectors - 1 <= last_sector;
+    std::string error;
+    for (std::size_t index = 0; media_ok && index < sectors; ++index) {
+      media_ok = image->write_floppy_sector(
+          cylinder, head, static_cast<std::uint8_t>(first_sector + index),
+          std::span<const std::uint8_t>(*data).subspan(
+              index * RawDiskImage::kSectorSize, RawDiskImage::kSectorSize),
+          &error);
+    }
+    if (media_ok) {
+      fdc_result_.insert(fdc_result_.end(),
+                         {static_cast<std::uint8_t>((head << 2) | drive), 0, 0,
+                          cylinder, head, result_sector, size_code});
     } else {
       fdc_result_.insert(fdc_result_.end(),
                          {static_cast<std::uint8_t>(0x48 | (head << 2) | drive),
@@ -453,6 +558,90 @@ void P2000cMachine::release_fdc_reset() {
   fdc_sense_status_ = 0xc0;
   fdc_sense_track_ = 0;
   fdc_sense_pending_ = true;
+  request_interrupt(0xde);
+}
+
+std::uint8_t P2000cMachine::read_sasi_control() const {
+  switch (sasi_phase_) {
+    case SasiPhase::kBusFree:
+      return 0;
+    case SasiPhase::kCommand:
+      return 0x8b;  // REQ, C/D and BSY.
+    case SasiPhase::kStatus:
+      return 0x9b;  // REQ, C/D, BSY and I/O.
+    case SasiPhase::kMessage:
+      return 0x9f;  // Status signals plus MSG.
+  }
+  return 0;
+}
+
+void P2000cMachine::write_sasi_control(std::uint8_t value) {
+  if ((value & 0x08) != 0) {
+    sasi_phase_ = SasiPhase::kBusFree;
+    sasi_command_length_ = 0;
+    sasi_status_ = 0;
+    return;
+  }
+  if ((value & 0x04) != 0 && sasi_phase_ == SasiPhase::kBusFree &&
+      std::any_of(hard_disks_.begin(), hard_disks_.end(),
+                  [](const auto& disk) { return disk.has_value(); })) {
+    sasi_phase_ = SasiPhase::kCommand;
+    sasi_command_length_ = 0;
+    sasi_status_ = 0;
+  }
+}
+
+std::uint8_t P2000cMachine::read_sasi_data() {
+  if (sasi_phase_ == SasiPhase::kStatus) {
+    sasi_phase_ = SasiPhase::kMessage;
+    return sasi_status_;
+  }
+  if (sasi_phase_ == SasiPhase::kMessage) {
+    sasi_phase_ = SasiPhase::kBusFree;
+    return 0;
+  }
+  return 0xff;
+}
+
+void P2000cMachine::write_sasi_data(std::uint8_t value) {
+  if (sasi_phase_ != SasiPhase::kCommand ||
+      sasi_command_length_ >= sasi_command_.size()) {
+    return;
+  }
+  sasi_command_[sasi_command_length_++] = value;
+  if (sasi_command_length_ == sasi_command_.size()) {
+    execute_sasi_command();
+  }
+}
+
+void P2000cMachine::execute_sasi_command() {
+  const std::uint8_t opcode = sasi_command_[0] & 0x1f;
+  const std::size_t unit = (sasi_command_[1] >> 5) & 0x07;
+  const std::size_t lba =
+      (static_cast<std::size_t>(sasi_command_[1] & 0x1f) << 16) |
+      (static_cast<std::size_t>(sasi_command_[2]) << 8) | sasi_command_[3];
+  const std::size_t block_count =
+      sasi_command_[4] == 0 ? 256 : sasi_command_[4];
+  RawDiskImage* disk = unit < hard_disks_.size() && hard_disks_[unit].has_value()
+                           ? &*hard_disks_[unit]
+                           : nullptr;
+  bool okay = disk != nullptr;
+
+  if (okay && opcode == 0x08) {
+    const std::span<const std::uint8_t> data = disk->blocks(lba, block_count);
+    okay = !data.empty() && run_floppy_dma(data);
+  } else if (okay && opcode == 0x0a) {
+    std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
+    std::string error;
+    okay = data.has_value() &&
+           data->size() == block_count * RawDiskImage::kSectorSize &&
+           disk->write_blocks(lba, *data, &error);
+  } else if (opcode != 0x00 && opcode != 0x01 && opcode != 0x0b) {
+    okay = false;
+  }
+
+  sasi_status_ = okay ? 0 : 0x02;
+  sasi_phase_ = SasiPhase::kStatus;
   request_interrupt(0xde);
 }
 

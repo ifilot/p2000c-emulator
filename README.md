@@ -4,8 +4,8 @@ An early C++/Qt 6 emulator for the Philips P2000C portable computer.
 
 The current prototype boots the supplied CP/M system floppy with the authentic
 4 KiB mainboard IPL. It integrates a complete Z80 interpreter and the IPL ROM
-overlay, an initial Intel 8257/uPD765 floppy path, vectored interrupts, and a
-high-level replacement for the serial terminal board. The Qt application
+overlay, Intel 8257/uPD765 floppy and SASI hard-disk paths, vectored interrupts,
+and a high-level replacement for the serial terminal board. The Qt application
 renders the terminal's 80x24 character mode and its mixed 256x252 and 512x252
 graphics modes, using the supplied 256-character P2000C font, and accepts
 keyboard input. The documented serial graphics protocol includes pixels,
@@ -16,10 +16,10 @@ renderer preserves the hardware timing rasters, calibrated non-square dot
 proportions, visible phosphor scanline gaps, restrained bloom, and a blinking
 block cursor.
 
-This is deliberately still a minimal prototype. The floppy controller covers
-the commands needed during startup, terminal control-code support is partial,
-and SASI hard-disk boot, printer, communications, sound, and the terminal-board
-Z80 are not implemented yet.
+This is deliberately still a minimal prototype. The disk controllers cover the
+commands used by the bundled CP/M system, terminal control-code support is
+partial, and printer, communications, sound, and the terminal-board Z80 are not
+implemented yet.
 
 ## Requirements
 
@@ -56,17 +56,24 @@ Run the graphical shell with:
 ./build/p2000c
 ```
 
-The verified IPL dump is embedded in the application. Use **Media > Drive A >
-Use CP/M 2.2 System Floppy** to mount and boot the included system disk without
-locating it on the host. A persistent writable copy is created in the user
-application-data directory, leaving the bundled master intact. Each drive menu
-also provides a blank 640 KiB data floppy and an **Open Image...** action for
-external ImageDisk files.
+The verified IPL dump and default media are embedded in the application. At
+startup, drive A receives a persistent writable copy of `images/system.flp`;
+drive B remains available for another 640 KiB FLP. Two persistent 10 MiB HDA
+working images back C/D and E/F, each pair representing the low and high 5 MiB
+CP/M volumes of one physical SASI disk.
 
-The Media menu is organized by drive and shows each mounted filename directly
-in the Drive A and Drive B submenu titles. Matching bundled images are checked,
-and persistent status-bar indicators show both drives at a glance; hover an
-indicator or the mounted-image menu entry to see the full path.
+The drive A and B menus provide the bootable core system, non-bootable ZORK,
+CHESS, and IPL dump toolchain disks, a blank data floppy, and an action for
+opening external `.flp` images. The hard-disk menus expose physical disk 1
+(C/D) and disk 2 (E/F) and accept exact 10 MiB `.hda` images. Bundled masters
+remain unchanged; all emulated writes go directly to per-user working copies.
+Bundled floppy copies are kept in content-versioned directories, so an updated
+master is mounted without overwriting a writable copy made by an older emulator
+version.
+
+The Media menu shows each mounted filename directly in its submenu title.
+Matching bundled images are checked, and status-bar indicators cover A, B,
+C/D, and E/F; hover an indicator or mounted-image entry for the full path.
 
 The **View > Display Resolution** menu offers fixed, aspect-correct display
 sizes from 560x288 through 1680x864. The selected size is remembered between
@@ -83,13 +90,24 @@ host clock. Authentic speed is four million Z80 T-states per second; selectable
 scales range from 1 MHz/25% through 16 MHz/400%. Scaling accelerates or slows
 the complete emulated machine, including its timer interrupt cadence.
 
-Changes made by future emulated write commands will be applied directly to the
-selected working image, so keep a backup of valuable external media.
+Emulated floppy and SASI writes are applied directly to the selected working
+image, so keep a backup of valuable external media.
 
-Inspect an IMD image without starting Qt:
+Inspect a raw image without starting Qt:
 
 ```sh
-./build/p2000c_media_info images/p2kc_sys.imd
+./build/p2000c_media_info images/system.flp
+./build/p2000c_media_info images/blank.hda
+```
+
+Rebuild all bundled images deterministically from the archived payloads:
+
+```sh
+python3 tools/build_media.py \
+  --system media/system/p2000c-ab-cdef.trk \
+  --core media/files/core --zork media/files/zork \
+  --chess media/files/chess/CHESS.COM --ipldump tools/IPLDUMP.ASM \
+  --output images
 ```
 
 ## Firmware
@@ -111,6 +129,7 @@ provided in [`tools/IPLDUMP.ASM`](tools/IPLDUMP.ASM). See
 - `manuals/P2000C-SystemRefServiceManual.pdf`
 - `manuals/P2519CPM_UserGuide.pdf`
 - `manuals/P2519_CPM_Reference.pdf`
+- `https://github.com/ifilot/p2000c-cpm-disk-tool`
 
 The Z80 core is vendored from `superzazu/z80`, commit
 `d64fe10a2274e5e40019b1086bf7d8990cbc5f23`, under its original MIT/Expat

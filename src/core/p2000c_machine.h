@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-#include "core/imd_image.h"
+#include "core/raw_disk_image.h"
 #include "core/terminal.h"
 
 struct z80;
@@ -47,11 +47,15 @@ class P2000cMachine {
     /** Loads and validates a 4 KiB mainboard IPL firmware byte sequence. */
     bool load_ipl_rom(std::span<const std::uint8_t> bytes, std::string* error);
 
-    /** Mounts floppy drive A as directly writable ImageDisk media. */
+    /** Mounts floppy drive A as a directly writable 640 KiB FLP image. */
     bool mount_floppy_a(const std::filesystem::path& path, std::string* error);
 
-    /** Mounts floppy drive B as directly writable ImageDisk media. */
+    /** Mounts floppy drive B as a directly writable 640 KiB FLP image. */
     bool mount_floppy_b(const std::filesystem::path& path, std::string* error);
+
+    /** Mounts one of the two 10 MiB SASI hard-disk images. */
+    bool mount_hard_disk(std::size_t drive, const std::filesystem::path& path,
+                         std::string* error);
 
     /** Restores reset state, including the IPL ROM overlay at address zero. */
     void reset();
@@ -63,13 +67,18 @@ class P2000cMachine {
     bool has_ipl_rom() const { return has_ipl_rom_; }
 
     /** Returns the mounted floppy, if any. */
-    const std::optional<ImdImage>& floppy_a() const {
+    const std::optional<RawDiskImage>& floppy_a() const {
       return floppy_drives_[0];
     }
 
     /** Returns the floppy mounted in drive B, if any. */
-    const std::optional<ImdImage>& floppy_b() const {
+    const std::optional<RawDiskImage>& floppy_b() const {
       return floppy_drives_[1];
+    }
+
+    /** Returns either mounted physical SASI hard disk. */
+    const std::optional<RawDiskImage>& hard_disk(std::size_t drive) const {
+      return hard_disks_.at(drive);
     }
 
     /** Returns the high-level serial terminal. */
@@ -104,6 +113,9 @@ class P2000cMachine {
     /** Dispatches Z80 output instructions to mainboard devices. */
     static void cpu_port_out(z80* cpu, std::uint8_t port, std::uint8_t value);
 
+    /** Selects the IPL-ROM overlay or the all-internal-RAM mapping. */
+    void write_memory_manager(std::uint8_t value);
+
     /** Advances asynchronous devices and presents pending interrupts. */
     void update_devices();
 
@@ -122,6 +134,9 @@ class P2000cMachine {
     /** Transfers floppy data through DMA channel zero. */
     bool run_floppy_dma(std::span<const std::uint8_t> data);
 
+    /** Copies channel-zero memory into a device-write buffer. */
+    std::optional<std::vector<std::uint8_t>> take_disk_dma();
+
     /** Returns the uPD765 main-status register. */
     std::uint8_t fdc_status() const;
 
@@ -137,6 +152,21 @@ class P2000cMachine {
     /** Handles a rising edge on the active-low uPD765 reset signal. */
     void release_fdc_reset();
 
+    /** Returns the current SASI control-bus signals. */
+    std::uint8_t read_sasi_control() const;
+
+    /** Handles SASI SEL and RESET output signals. */
+    void write_sasi_control(std::uint8_t value);
+
+    /** Reads a SASI status or message byte. */
+    std::uint8_t read_sasi_data();
+
+    /** Accepts a SASI command byte. */
+    void write_sasi_data(std::uint8_t value);
+
+    /** Executes one complete six-byte SASI command. */
+    void execute_sasi_command();
+
     /** Reads an SIO-B status or receive-data port. */
     std::uint8_t read_terminal_sio(std::uint8_t port);
 
@@ -148,19 +178,27 @@ class P2000cMachine {
                       std::string* error);
 
     /** Returns a mounted floppy selected by a uPD765 unit number. */
-    const ImdImage* floppy_drive(std::uint8_t drive) const;
+    const RawDiskImage* floppy_drive(std::uint8_t drive) const;
+
+    enum class SasiPhase {
+      kBusFree,
+      kCommand,
+      kStatus,
+      kMessage,
+    };
 
     std::array<std::uint8_t, kMemorySize> ram_{};
     std::array<std::uint8_t, kIplRomSize> ipl_rom_{};
     std::unique_ptr<z80> cpu_;
-    std::array<std::optional<ImdImage>, 2> floppy_drives_;
+    std::array<std::optional<RawDiskImage>, 2> floppy_drives_;
+    std::array<std::optional<RawDiskImage>, 2> hard_disks_;
     Terminal terminal_;
     std::array<DmaChannel, 4> dma_channels_{};
     std::deque<std::uint8_t> interrupt_queue_;
     std::vector<std::uint8_t> fdc_command_;
     std::deque<std::uint8_t> fdc_result_;
     bool has_ipl_rom_ = false;
-    bool rom_overlay_enabled_ = true;
+    std::uint8_t memory_manager_ = 0;
     bool dma_high_byte_ = false;
     bool dma_read_high_byte_ = false;
     bool handshake_started_ = false;
@@ -174,6 +212,10 @@ class P2000cMachine {
     std::uint8_t fdc_sense_status_ = 0xc0;
     std::array<std::uint8_t, 2> fdc_tracks_{};
     std::uint8_t fdc_sense_track_ = 0;
+    SasiPhase sasi_phase_ = SasiPhase::kBusFree;
+    std::array<std::uint8_t, 6> sasi_command_{};
+    std::size_t sasi_command_length_ = 0;
+    std::uint8_t sasi_status_ = 0;
     std::uint8_t sio_b_register_ = 0;
     std::uint8_t sio_b_receive_byte_ = 0;
     bool sio_b_receive_ready_ = false;

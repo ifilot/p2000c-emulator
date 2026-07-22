@@ -7,7 +7,9 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QEventLoop>
+#include <QFile>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -26,7 +28,7 @@
 #include <string>
 
 #include "app/display_widget.h"
-#include "core/imd_image.h"
+#include "core/raw_disk_image.h"
 
 namespace {
 
@@ -45,7 +47,7 @@ QAction* find_named_action(p2000c::MainWindow* window,
   return window->findChild<QAction*>(object_name);
 }
 
-/** Converts a QString to a host filesystem path for ImageDisk validation. */
+/** Converts a QString to a host filesystem path for raw-image validation. */
 std::filesystem::path filesystem_path(const QString& path) {
   const QByteArray utf8 = path.toUtf8();
   const auto* begin = reinterpret_cast<const char8_t*>(utf8.constData());
@@ -53,15 +55,36 @@ std::filesystem::path filesystem_path(const QString& path) {
 }
 
 /** Opens an expected working image and checks its physical geometry. */
-bool validate_image(const QString& path) {
+bool validate_image(const QString& path, p2000c::RawDiskImage::Kind kind) {
   std::string error;
-  const std::optional<p2000c::ImdImage> image =
-      p2000c::ImdImage::open(filesystem_path(path), &error);
-  if (!image.has_value() || image->tracks().size() != 160) {
+  const std::optional<p2000c::RawDiskImage> image =
+      p2000c::RawDiskImage::open(filesystem_path(path), kind, &error);
+  if (!image.has_value()) {
     std::cerr << "Invalid bundled working image: " << error << '\n';
     return false;
   }
   return true;
+}
+
+/** Finds the writable copy whose bytes match the current bundled master. */
+QString current_bundled_copy(const QString& media_directory,
+                             const QString& filename,
+                             const QString& resource) {
+  QFile master(resource);
+  if (!master.open(QIODevice::ReadOnly)) {
+    return {};
+  }
+  const QByteArray expected = master.readAll();
+  QDirIterator candidates(QDir(media_directory).filePath("bundled"),
+                          QStringList{filename}, QDir::Files,
+                          QDirIterator::Subdirectories);
+  while (candidates.hasNext()) {
+    QFile candidate(candidates.next());
+    if (candidate.open(QIODevice::ReadOnly) && candidate.readAll() == expected) {
+      return candidate.fileName();
+    }
+  }
+  return {};
 }
 
 /** Checks inverse cells and the four documented intensity levels in pixels. */
@@ -273,6 +296,23 @@ int main(int argc, char* argv[]) {
   QApplication::setApplicationName("P2000C Emulator UI Test");
   QApplication::setOrganizationName("P2000C Emulator Project");
 
+  const QString media_directory =
+      QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+          .filePath("media");
+  if (!QDir().mkpath(media_directory)) {
+    return 1;
+  }
+  const QString obsolete_system_path =
+      QDir(media_directory).filePath("system_drive_a.flp");
+  QFile obsolete_system(obsolete_system_path);
+  const QByteArray obsolete_bytes(
+      static_cast<qsizetype>(p2000c::RawDiskImage::kFloppySize), '\0');
+  if (!obsolete_system.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+      obsolete_system.write(obsolete_bytes) != obsolete_bytes.size()) {
+    return 1;
+  }
+  obsolete_system.close();
+
   if (!validate_attribute_rendering() || !validate_graphics_rendering() ||
       !validate_crt_effect_rendering()) {
     return 1;
@@ -419,10 +459,11 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  const QString media_directory =
-      QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
-          .filePath("media");
-  if (!validate_image(QDir(media_directory).filePath("p2kc_sys_drive_a.imd"))) {
+  const QString system_path = current_bundled_copy(
+      media_directory, "system_drive_a.flp", ":/images/system.flp");
+  if (system_path.isEmpty() ||
+      !validate_image(system_path,
+                      p2000c::RawDiskImage::Kind::kFloppy)) {
     return 1;
   }
   auto* drive_a_status = window.findChild<QLabel*>("floppyDriveAStatus");
@@ -430,10 +471,55 @@ int main(int argc, char* argv[]) {
   auto* drive_a_current = window.findChild<QAction*>("currentFloppyAAction");
   if (drive_a_status == nullptr || drive_a_menu == nullptr ||
       drive_a_current == nullptr ||
-      !drive_a_status->text().contains("p2kc_sys_drive_a.imd") ||
-      !drive_a_menu->title().contains("p2kc_sys_drive_a.imd") ||
+      !drive_a_status->text().contains("system_drive_a.flp") ||
+      !drive_a_status->toolTip().contains(system_path) ||
+      !drive_a_menu->title().contains("system_drive_a.flp") ||
       !drive_a_current->isChecked() || !system->isChecked()) {
     std::cerr << "Drive A media indicators did not show the mounted image.\n";
+    return 1;
+  }
+  QFile preserved_obsolete(obsolete_system_path);
+  if (!preserved_obsolete.open(QIODevice::ReadOnly) ||
+      preserved_obsolete.readAll() != obsolete_bytes) {
+    std::cerr << "Obsolete writable media was overwritten during migration.\n";
+    return 1;
+  }
+
+  QAction* zork = find_named_action(&window, "mountZorkFloppyBAction");
+  QAction* chess = find_named_action(&window, "mountChessFloppyBAction");
+  QAction* ipldump =
+      find_named_action(&window, "mountIplDumpFloppyBAction");
+  if (zork == nullptr || chess == nullptr || ipldump == nullptr) {
+    return 1;
+  }
+  zork->trigger();
+  const QString zork_path = current_bundled_copy(
+      media_directory, "zork_drive_b.flp", ":/images/zork.flp");
+  if (zork_path.isEmpty() ||
+      !validate_image(zork_path,
+                      p2000c::RawDiskImage::Kind::kFloppy) ||
+      !zork->isChecked()) {
+    std::cerr << "Bundled ZORK floppy did not mount as raw media.\n";
+    return 1;
+  }
+  chess->trigger();
+  const QString chess_path = current_bundled_copy(
+      media_directory, "chess_drive_b.flp", ":/images/chess.flp");
+  if (chess_path.isEmpty() ||
+      !validate_image(chess_path,
+                      p2000c::RawDiskImage::Kind::kFloppy) ||
+      !chess->isChecked()) {
+    std::cerr << "Bundled CHESS floppy did not mount as raw media.\n";
+    return 1;
+  }
+  ipldump->trigger();
+  const QString ipldump_path = current_bundled_copy(
+      media_directory, "ipldump_drive_b.flp", ":/images/ipldump.flp");
+  if (ipldump_path.isEmpty() ||
+      !validate_image(ipldump_path,
+                      p2000c::RawDiskImage::Kind::kFloppy) ||
+      !ipldump->isChecked()) {
+    std::cerr << "Bundled IPL dump toolchain did not mount as raw media.\n";
     return 1;
   }
 
@@ -449,13 +535,31 @@ int main(int argc, char* argv[]) {
   auto* drive_b_status = window.findChild<QLabel*>("floppyDriveBStatus");
   auto* drive_b_current = window.findChild<QAction*>("currentFloppyBAction");
   if (drive_b_status == nullptr || drive_b_current == nullptr ||
-      !drive_b_status->text().contains("blank_640k_drive_b.imd") ||
+      !drive_b_status->text().contains("blank_drive_b.flp") ||
       !drive_b_current->isChecked() || !blank->isChecked()) {
     std::cerr << "Drive B media indicators did not show the mounted image.\n";
     return 1;
   }
-  return validate_image(
-             QDir(media_directory).filePath("blank_640k_drive_b.imd"))
-             ? 0
-             : 1;
+  if (!validate_image(QDir(media_directory).filePath("blank_drive_b.flp"),
+                      p2000c::RawDiskImage::Kind::kFloppy)) {
+    return 1;
+  }
+  for (int drive = 1; drive <= 2; ++drive) {
+    auto* status =
+        window.findChild<QLabel*>(QString("hardDisk%1Status").arg(drive));
+    auto* current = window.findChild<QAction*>(
+        QString("currentHardDisk%1Action").arg(drive));
+    auto* bundled = window.findChild<QAction*>(
+        QString("mountDefaultHardDisk%1Action").arg(drive));
+    const QString filename = QString("hard_disk_%1.hda").arg(drive);
+    if (status == nullptr || current == nullptr || bundled == nullptr ||
+        !status->text().contains(filename) || !current->isChecked() ||
+        !bundled->isChecked() ||
+        !validate_image(QDir(media_directory).filePath(filename),
+                        p2000c::RawDiskImage::Kind::kHardDisk)) {
+      std::cerr << "Default SASI hard-disk working image was not mounted.\n";
+      return 1;
+    }
+  }
+  return 0;
 }

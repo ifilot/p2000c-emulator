@@ -5,9 +5,11 @@ Research CP/M `ASM.COM` assembler. It uses only Intel 8080 mnemonics.
 
 ## Prepare the floppy
 
-Copy the source to a writable P2000C CP/M floppy under the name
-`IPLDUMP.ASM`. Ensure that the disk has at least roughly 12 KiB free for the
-source, assembler output, executable, and final dump.
+The emulator bundles `images/ipldump.flp`, a non-bootable writable floppy with
+`ASM.COM`, `LOAD.COM`, and `IPLDUMP.ASM`. Mount it in drive B through **Media >
+Drive B > Use IPL Dump Toolchain Floppy**. On a real P2000C, copy these three
+files to a writable CP/M floppy with at least roughly 12 KiB free for the
+assembler output, executable, and final dump.
 
 The repository copy of `IPLDUMP.ASM` is already encoded as CP/M text: ASCII,
 CR/LF line endings, no Unicode byte-order mark, and a final `1AH` end-of-file
@@ -15,8 +17,6 @@ byte. It can therefore be injected directly into a CP/M filesystem. A transfer
 program's text/ASCII mode is also acceptable, provided it does not duplicate
 the final marker. Do not use text conversion when retrieving `IPLDUMP.BIN`.
 
-Every source line is limited to 79 columns. This keeps the complete line on the
-P2000C's 80-column terminal without invoking right-margin wrapping.
 Every source line is at most 79 characters wide, so viewing or assembling the
 file never depends on wrapping beyond the P2000C's 80-column display.
 
@@ -25,18 +25,21 @@ file never depends on wrapping beyond the P2000C's 80-column display.
 At the CP/M prompt:
 
 ```text
-A>ASM IPLDUMP
-A>LOAD IPLDUMP
-A>IPLDUMP
+B>ASM IPLDUMP
+B>LOAD IPLDUMP
+B>IPLDUMP
 ```
 
-`ASM.COM` should report zero errors and create `IPLDUMP.HEX`. `LOAD.COM` turns
-that file into `IPLDUMP.COM`. Running it creates `IPLDUMP.BIN` on the current
-drive. The existing `IPLDUMP.BIN`, if any, is replaced.
+`ASM.COM` should reach `END OF ASSEMBLY` without an error and create
+`IPLDUMP.HEX`. `LOAD.COM` turns that file into `IPLDUMP.COM`. Running it creates
+`IPLDUMP.BIN` on the current drive. The existing `IPLDUMP.BIN`, if any, is
+replaced.
 
 The COM file contains an intentional unused area. Its ROM-reading routine is
 assembled at address `1000H`, beyond the mainboard ROM overlay. Do not relocate
-or remove that `ORG 1000H` directive.
+or remove that `ORG 1000H` directive. The routine writes `00H` to memory-manager
+port `1EH` to expose the ROM at `0000H`-`0FFFH`, then writes `02H` to restore
+CP/M's all-RAM mapping before calling BDOS.
 
 ## Retrieve and verify
 

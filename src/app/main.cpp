@@ -15,6 +15,12 @@ int main(int argc, char* argv[]) {
   if (argc > 2) {
     window.mount_floppy(std::filesystem::path(argv[2]), 1);
   }
+  if (argc > 3) {
+    window.mount_hard_disk(std::filesystem::path(argv[3]), 0);
+  }
+  if (argc > 4) {
+    window.mount_hard_disk(std::filesystem::path(argv[4]), 1);
+  }
   window.show();
   return application.exec();
 }

@@ -71,13 +71,51 @@ IPL installs firmware driver entry points at `f606` and a driver parameter block
 referenced by `ffd0`. The supplied boot track calls these services. Authentic
 boot therefore requires the mainboard IPL ROM rather than only the disk image.
 
-The current uPD765 model implements reset, specify, sense-interrupt,
-recalibrate, seek, and read-data behavior sufficient for this supplied system
-disk to reach its CP/M 2.2 banner. Both uPD765 unit 0 and unit 1 are connected
-to independently mounted ImageDisk media as floppy drives A and B. Sector
-writes and the remaining controller commands are still pending.
+The memory manager is selected through bits 0 and 1 of output port `1EH`.
+Writing `00H` makes the IPL ROM readable at `0000H`-`0FFFH` while writes still
+reach the underlying internal RAM; writing `02H` restores internal RAM over the
+whole address space. This permits a routine executing above `0FFFH` to expose,
+copy, and then hide the IPL ROM without resetting the machine.
 
-Sources: service manual sections 2.1/3-2 through 3-4 and 2.1/3-5 through 3-13.
+The current uPD765 model implements reset, specify, sense-interrupt,
+recalibrate, seek, read-data, and write-data behavior used by the supplied
+system. Both uPD765 units use exact 655,360-byte raw FLP media. Bytes are stored
+by cylinder, then head, then sector ID 1 through 16; the CP/M filesystem applies
+its documented odd/even sector translation above that physical ordering.
+The manual's `STAT` output reports 632 KiB of CP/M record capacity: the raw
+medium is still exactly 640 KiB, with two 4 KiB physical tracks reserved for
+the boot system.
+
+Sources: service manual sections 2.1/3-2 through 3-4, 2.1/3-5 through 3-13,
+and 3.2/7-1 through 7-4.
+
+## SASI hard disks
+
+The P2000C SASI data and control registers occupy ports `16`-`19`. The
+interface selects up to two physical disks, shares DMA channel 0 with the
+uPD765, and uses CTC II channel 3 for completion interrupts. The emulator
+implements the six-byte SASI commands used by Philips CP/M for readiness,
+recalibration/seek, and 256-byte block reads and writes.
+
+Each HDA is a raw 10,485,760-byte device containing 40,960 blocks. The bundled
+system table exposes two approximately 5 MiB filesystems per physical disk:
+
+| CP/M drive | Physical device | Volume |
+|---|---|---|
+| A | floppy 1 | 640 KiB |
+| B | floppy 2 | 640 KiB |
+| C | hard disk 1 | low 5 MiB |
+| D | hard disk 1 | high 5 MiB |
+| E | hard disk 2 | low 5 MiB |
+| F | hard disk 2 | high 5 MiB |
+
+The split is described by the system-track DPBs rather than a byte boundary.
+On each HDA, the low directory begins at LBA 32 and the high directory at LBA
+19,584. The low filesystem has `DSM=1221, OFF=2`; the high filesystem has
+`DSM=1223, OFF=1224`.
+
+Sources: service manual sections 2.1/3-8 through 3-10 and 3.2/10-1 through
+10-4; P2519 CP/M Reference Manual section 4.7.
 
 ## Execution timing
 

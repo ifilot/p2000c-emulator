@@ -21,10 +21,10 @@ add_library(z80_core STATIC
 target_include_directories(z80_core PUBLIC third_party/superzazu_z80)
 
 add_library(p2000c_core STATIC
-  src/core/imd_image.cpp
-  src/core/imd_image.h
   src/core/p2000c_machine.cpp
   src/core/p2000c_machine.h
+  src/core/raw_disk_image.cpp
+  src/core/raw_disk_image.h
   src/core/terminal.cpp
   src/core/terminal.h
 )
@@ -56,7 +56,11 @@ if(P2000C_BUILD_APP)
     BASE "${CMAKE_CURRENT_SOURCE_DIR}"
     FILES
       "font/P2000C font mini.png"
-      "images/p2kc_sys.imd"
+      "images/blank.hda"
+      "images/chess.flp"
+      "images/ipldump.flp"
+      "images/system.flp"
+      "images/zork.flp"
       "tools/IPLDUMP.BIN"
   )
   target_link_libraries(p2000c PRIVATE p2000c_core Qt6::Widgets)
@@ -74,11 +78,13 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_ipldump.cmake
   )
 
-  add_executable(imd_image_test tests/imd_image_test.cpp)
-  target_link_libraries(imd_image_test PRIVATE p2000c_core)
+  add_executable(raw_disk_image_test tests/raw_disk_image_test.cpp)
+  target_link_libraries(raw_disk_image_test PRIVATE p2000c_core)
   add_test(
-    NAME imd_image_test
-    COMMAND imd_image_test ${CMAKE_CURRENT_SOURCE_DIR}/images/p2kc_sys.imd
+    NAME raw_disk_image_test
+    COMMAND raw_disk_image_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
   )
 
   add_executable(p2000c_machine_test tests/p2000c_machine_test.cpp)
@@ -87,7 +93,11 @@ if(BUILD_TESTING)
     NAME p2000c_machine_test
     COMMAND p2000c_machine_test
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/IPLDUMP.BIN
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/p2kc_sys.imd
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/zork.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/chess.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/ipldump.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
   )
 
   if(P2000C_BUILD_APP)
@@ -105,7 +115,11 @@ if(BUILD_TESTING)
       BASE "${CMAKE_CURRENT_SOURCE_DIR}"
       FILES
         "font/P2000C font mini.png"
-        "images/p2kc_sys.imd"
+        "images/blank.hda"
+        "images/chess.flp"
+        "images/ipldump.flp"
+        "images/system.flp"
+        "images/zork.flp"
         "tools/IPLDUMP.BIN"
     )
     target_link_libraries(p2000c_app_test PRIVATE p2000c_core Qt6::Widgets)

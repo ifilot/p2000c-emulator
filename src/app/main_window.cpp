@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -156,7 +157,45 @@ std::optional<QString> writable_resource_copy(const QString& resource,
   return destination;
 }
 
-/** Creates a compressed, unformatted 80x2x16x256 ImageDisk floppy. */
+/** Copies immutable bundled media into a directory keyed by its contents. */
+std::optional<QString> writable_versioned_resource_copy(
+    const QString& resource, const QString& filename, QString* error) {
+  QFile input(resource);
+  if (!input.open(QIODevice::ReadOnly)) {
+    *error = "Could not open bundled media resource " + resource + ".";
+    return std::nullopt;
+  }
+  const QByteArray image = input.readAll();
+  const QString version = QString::fromLatin1(
+      QCryptographicHash::hash(image, QCryptographicHash::Sha256)
+          .toHex()
+          .left(16));
+  const std::optional<QString> media_directory =
+      writable_media_directory(error);
+  if (!media_directory.has_value()) {
+    return std::nullopt;
+  }
+  const QString directory =
+      QDir(*media_directory).filePath("bundled/" + version);
+  if (!QDir().mkpath(directory)) {
+    *error = "Could not create the versioned bundled-media directory.";
+    return std::nullopt;
+  }
+  const QString destination = QDir(directory).filePath(filename);
+  if (QFileInfo::exists(destination)) {
+    return destination;
+  }
+
+  QSaveFile output(destination);
+  if (!output.open(QIODevice::WriteOnly) ||
+      output.write(image) != image.size() || !output.commit()) {
+    *error = "Could not create writable bundled media " + destination + ".";
+    return std::nullopt;
+  }
+  return destination;
+}
+
+/** Creates an unformatted 80x2x16x256 raw floppy. */
 std::optional<QString> writable_blank_floppy(const QString& filename,
                                              QString* error) {
   const std::optional<QString> directory = writable_media_directory(error);
@@ -168,24 +207,8 @@ std::optional<QString> writable_blank_floppy(const QString& filename,
     return destination;
   }
 
-  QByteArray image("IMD 1.18: P2000C emulator blank 640 KiB\r\n");
-  image.append(static_cast<char>(0x1a));
-  for (int cylinder = 0; cylinder < 80; ++cylinder) {
-    for (int head = 0; head < 2; ++head) {
-      image.append(static_cast<char>(4));
-      image.append(static_cast<char>(cylinder));
-      image.append(static_cast<char>(head));
-      image.append(static_cast<char>(16));
-      image.append(static_cast<char>(1));
-      for (int sector = 1; sector <= 16; ++sector) {
-        image.append(static_cast<char>(sector));
-      }
-      for (int sector = 0; sector < 16; ++sector) {
-        image.append(static_cast<char>(2));
-        image.append(static_cast<char>(0xe5));
-      }
-    }
-  }
+  const QByteArray image(static_cast<qsizetype>(RawDiskImage::kFloppySize),
+                         static_cast<char>(0xe5));
 
   QSaveFile output(destination);
   if (!output.open(QIODevice::WriteOnly) ||
@@ -220,6 +243,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
       statusBar()->showMessage(QString::fromStdString(error));
     }
   }
+  mount_default_media();
 
   timer_ = new QTimer(this);
   timer_->setTimerType(Qt::PreciseTimer);
@@ -249,6 +273,22 @@ bool MainWindow::mount_floppy(const std::filesystem::path& path,
       qstring_path(path));
   refresh_media_indicators();
   refresh_screen();
+  return true;
+}
+
+bool MainWindow::mount_hard_disk(const std::filesystem::path& path,
+                                 std::size_t drive) {
+  std::string error;
+  if (!machine_.mount_hard_disk(drive, path, &error)) {
+    QMessageBox::critical(this, "Cannot mount hard disk",
+                          QString::fromStdString(error));
+    refresh_media_indicators();
+    return false;
+  }
+  statusBar()->showMessage(
+      QString("SASI hard disk %1 mounted read/write: ").arg(drive + 1) +
+      qstring_path(path));
+  refresh_media_indicators();
   return true;
 }
 
@@ -320,6 +360,31 @@ void MainWindow::create_menus() {
     connect(system_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_system_floppy(drive); });
 
+    QAction* zork_floppy = drive_menu->addAction("Use &ZORK Data Floppy");
+    zork_floppy->setObjectName(
+        QString("mountZorkFloppy%1Action").arg(drive_letter));
+    zork_floppy->setCheckable(true);
+    bundled_zork_actions_[drive] = zork_floppy;
+    connect(zork_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_zork_floppy(drive); });
+
+    QAction* chess_floppy = drive_menu->addAction("Use &CHESS Data Floppy");
+    chess_floppy->setObjectName(
+        QString("mountChessFloppy%1Action").arg(drive_letter));
+    chess_floppy->setCheckable(true);
+    bundled_chess_actions_[drive] = chess_floppy;
+    connect(chess_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_chess_floppy(drive); });
+
+    QAction* ipldump_floppy =
+        drive_menu->addAction("Use IPL &Dump Toolchain Floppy");
+    ipldump_floppy->setObjectName(
+        QString("mountIplDumpFloppy%1Action").arg(drive_letter));
+    ipldump_floppy->setCheckable(true);
+    bundled_ipldump_actions_[drive] = ipldump_floppy;
+    connect(ipldump_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_ipldump_floppy(drive); });
+
     QAction* blank_floppy =
         drive_menu->addAction("Use &Blank 640 KiB Data Floppy");
     blank_floppy->setObjectName(
@@ -338,6 +403,49 @@ void MainWindow::create_menus() {
     status->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     statusBar()->addPermanentWidget(status, 1);
     media_status_labels_[drive] = status;
+  }
+
+  media_menu->addSeparator();
+  for (std::size_t drive = 0; drive < 2; ++drive) {
+    const QString volumes = drive == 0 ? "C/D" : "E/F";
+    QMenu* drive_menu = media_menu->addMenu(
+        QString("Hard disk &%1 (%2) — empty").arg(drive + 1).arg(volumes));
+    drive_menu->setObjectName(QString("hardDisk%1Menu").arg(drive + 1));
+    drive_menu->setToolTipsVisible(true);
+    hard_disk_menus_[drive] = drive_menu;
+
+    QAction* current = drive_menu->addAction("Mounted: none");
+    current->setObjectName(
+        QString("currentHardDisk%1Action").arg(drive + 1));
+    current->setEnabled(false);
+    current->setCheckable(true);
+    QFont current_font = current->font();
+    current_font.setBold(true);
+    current->setFont(current_font);
+    current_hard_disk_actions_[drive] = current;
+
+    drive_menu->addSeparator();
+    QAction* open = drive_menu->addAction("&Open HDA Image...");
+    open->setObjectName(QString("openHardDisk%1Action").arg(drive + 1));
+    connect(open, &QAction::triggered, this,
+            [this, drive]() { open_hard_disk(drive); });
+    QAction* bundled = drive_menu->addAction("Use &Default Blank HDA");
+    bundled->setObjectName(
+        QString("mountDefaultHardDisk%1Action").arg(drive + 1));
+    bundled->setCheckable(true);
+    bundled_hard_disk_actions_[drive] = bundled;
+    connect(bundled, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_hard_disk(drive); });
+
+    auto* status = new QLabel(this);
+    status->setObjectName(QString("hardDisk%1Status").arg(drive + 1));
+    status->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    status->setMargin(4);
+    status->setMinimumWidth(90);
+    status->setMaximumWidth(210);
+    status->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    statusBar()->addPermanentWidget(status, 1);
+    hard_disk_status_labels_[drive] = status;
   }
 
   QMenu* view_menu = menuBar()->addMenu("&View");
@@ -398,10 +506,8 @@ void MainWindow::refresh_screen() {
                            ? "IPL ROM: LOADED (4096 BYTES)"
                            : "IPL ROM: MISSING - LOAD VIA MACHINE MENU");
   if (machine_.floppy_a().has_value()) {
-    const ImdImage& floppy = *machine_.floppy_a();
     display_->write_text(2, 9, "FLOPPY A: MOUNTED READ/WRITE");
-    display_->write_text(
-        2, 10, "TRACK RECORDS: " + std::to_string(floppy.tracks().size()));
+    display_->write_text(2, 10, "RAW CAPACITY: 640 KIB");
   } else {
     display_->write_text(2, 9, "FLOPPY A: NOT MOUNTED");
   }
@@ -432,16 +538,25 @@ void MainWindow::open_floppy(std::size_t drive) {
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const QString path = QFileDialog::getOpenFileName(
       this, QString("Mount floppy %1 read/write").arg(drive_letter), {},
-      "ImageDisk images (*.imd);;All files (*)");
+      "Raw P2000C floppies (*.flp);;All files (*)");
   if (!path.isEmpty()) {
     mount_floppy(filesystem_path(path), drive);
+  }
+}
+
+void MainWindow::open_hard_disk(std::size_t drive) {
+  const QString path = QFileDialog::getOpenFileName(
+      this, QString("Mount SASI hard disk %1 read/write").arg(drive + 1), {},
+      "Raw P2000C hard disks (*.hda);;All files (*)");
+  if (!path.isEmpty()) {
+    mount_hard_disk(filesystem_path(path), drive);
   }
 }
 
 void MainWindow::refresh_media_indicators() {
   for (std::size_t drive = 0; drive < 2; ++drive) {
     const QChar drive_letter = drive == 0 ? 'A' : 'B';
-    const std::optional<ImdImage>& image =
+    const std::optional<RawDiskImage>& image =
         drive == 0 ? machine_.floppy_a() : machine_.floppy_b();
     if (!image.has_value()) {
       media_drive_menus_[drive]->setTitle(
@@ -455,13 +570,16 @@ void MainWindow::refresh_media_indicators() {
       media_status_labels_[drive]->setToolTip(
           QString("No image is mounted in floppy drive %1.").arg(drive_letter));
       bundled_system_actions_[drive]->setChecked(false);
+      bundled_zork_actions_[drive]->setChecked(false);
+      bundled_chess_actions_[drive]->setChecked(false);
+      bundled_ipldump_actions_[drive]->setChecked(false);
       bundled_blank_actions_[drive]->setChecked(false);
       continue;
     }
 
     const QString filename = compact_filename(image->path());
     const QString full_path = qstring_path(image->path());
-    const QString tooltip = QString("Drive %1 — writable ImageDisk image\n%2")
+    const QString tooltip = QString("Drive %1 — writable raw FLP image\n%2")
                                 .arg(drive_letter)
                                 .arg(full_path);
     media_drive_menus_[drive]->setTitle(
@@ -475,31 +593,86 @@ void MainWindow::refresh_media_indicators() {
     media_status_labels_[drive]->setToolTip(tooltip);
 
     const QString suffix = drive == 0 ? "a" : "b";
-    const QString system_path =
-        bundled_media_path("p2kc_sys_drive_" + suffix + ".imd");
+    const QString& system_path = bundled_system_paths_[drive];
+    const QString& zork_path = bundled_zork_paths_[drive];
+    const QString& chess_path = bundled_chess_paths_[drive];
+    const QString& ipldump_path = bundled_ipldump_paths_[drive];
     const QString blank_path =
-        bundled_media_path("blank_640k_drive_" + suffix + ".imd");
+        bundled_media_path("blank_drive_" + suffix + ".flp");
     bundled_system_actions_[drive]->setChecked(
-        QFileInfo(full_path).absoluteFilePath() ==
+        !system_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(system_path).absoluteFilePath());
+    bundled_zork_actions_[drive]->setChecked(
+        !zork_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(zork_path).absoluteFilePath());
+    bundled_chess_actions_[drive]->setChecked(
+        !chess_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(chess_path).absoluteFilePath());
+    bundled_ipldump_actions_[drive]->setChecked(
+        !ipldump_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(ipldump_path).absoluteFilePath());
     bundled_blank_actions_[drive]->setChecked(
         QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(blank_path).absoluteFilePath());
+  }
+
+  for (std::size_t drive = 0; drive < 2; ++drive) {
+    const QString volumes = drive == 0 ? "C/D" : "E/F";
+    const std::optional<RawDiskImage>& image = machine_.hard_disk(drive);
+    if (!image.has_value()) {
+      hard_disk_menus_[drive]->setTitle(
+          QString("Hard disk &%1 (%2) — empty")
+              .arg(drive + 1)
+              .arg(volumes));
+      current_hard_disk_actions_[drive]->setText("Mounted: none");
+      current_hard_disk_actions_[drive]->setChecked(false);
+      hard_disk_status_labels_[drive]->setText(volumes + ": empty");
+      hard_disk_status_labels_[drive]->setToolTip(
+          QString("No image is mounted for CP/M volumes %1.").arg(volumes));
+      bundled_hard_disk_actions_[drive]->setChecked(false);
+      continue;
+    }
+
+    const QString filename = compact_filename(image->path());
+    const QString full_path = qstring_path(image->path());
+    const QString tooltip =
+        QString("CP/M volumes %1 — writable 10 MiB raw HDA image\n%2")
+            .arg(volumes)
+            .arg(full_path);
+    hard_disk_menus_[drive]->setTitle(
+        QString("Hard disk &%1 (%2) — %3")
+            .arg(drive + 1)
+            .arg(volumes)
+            .arg(menu_safe(filename)));
+    current_hard_disk_actions_[drive]->setText("Mounted: " +
+                                                menu_safe(filename));
+    current_hard_disk_actions_[drive]->setChecked(true);
+    current_hard_disk_actions_[drive]->setToolTip(tooltip);
+    current_hard_disk_actions_[drive]->setStatusTip(full_path);
+    hard_disk_status_labels_[drive]->setText(volumes + ": " + filename);
+    hard_disk_status_labels_[drive]->setToolTip(tooltip);
+    const QString bundled_path =
+        bundled_media_path(QString("hard_disk_%1.hda").arg(drive + 1));
+    bundled_hard_disk_actions_[drive]->setChecked(
+        QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(bundled_path).absoluteFilePath());
   }
 }
 
 void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_resource_copy(
-      ":/images/p2kc_sys.imd",
-      QString("p2kc_sys_drive_%1.imd").arg(drive_letter.toLower()), &error);
+  const std::optional<QString> path = writable_versioned_resource_copy(
+      ":/images/system.flp",
+      QString("system_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare bundled floppy", error);
     refresh_media_indicators();
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    bundled_system_paths_[drive] = *path;
+    refresh_media_indicators();
     if (drive == 0) {
       machine_.reset();
       pending_t_states_ = 0.0;
@@ -514,11 +687,69 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
   }
 }
 
+void MainWindow::mount_bundled_zork_floppy(std::size_t drive) {
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = writable_versioned_resource_copy(
+      ":/images/zork.flp",
+      QString("zork_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare ZORK floppy", error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    bundled_zork_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("ZORK data floppy mounted in drive %1.").arg(drive_letter));
+  }
+}
+
+void MainWindow::mount_bundled_chess_floppy(std::size_t drive) {
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = writable_versioned_resource_copy(
+      ":/images/chess.flp",
+      QString("chess_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare CHESS floppy", error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    bundled_chess_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("CHESS data floppy mounted in drive %1.").arg(drive_letter));
+  }
+}
+
+void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = writable_versioned_resource_copy(
+      ":/images/ipldump.flp",
+      QString("ipldump_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare IPL dump floppy", error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    bundled_ipldump_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("IPL dump toolchain floppy mounted in drive %1.")
+            .arg(drive_letter));
+  }
+}
+
 void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = writable_blank_floppy(
-      QString("blank_640k_drive_%1.imd").arg(drive_letter.toLower()), &error);
+      QString("blank_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare blank floppy", error);
     refresh_media_indicators();
@@ -530,6 +761,29 @@ void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
                 "working copy.")
             .arg(drive_letter));
   }
+}
+
+void MainWindow::mount_bundled_hard_disk(std::size_t drive) {
+  QString error;
+  const std::optional<QString> path = writable_resource_copy(
+      ":/images/blank.hda", QString("hard_disk_%1.hda").arg(drive + 1),
+      &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare default hard disk", error);
+    refresh_media_indicators();
+    return;
+  }
+  mount_hard_disk(filesystem_path(*path), drive);
+}
+
+void MainWindow::mount_default_media() {
+  mount_bundled_system_floppy(0);
+  mount_bundled_hard_disk(0);
+  mount_bundled_hard_disk(1);
+  machine_.reset();
+  pending_t_states_ = 0.0;
+  refresh_media_indicators();
+  refresh_screen();
 }
 
 void MainWindow::set_display_resolution(const QSize& resolution) {
