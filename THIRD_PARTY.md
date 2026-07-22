@@ -34,7 +34,7 @@ copyright declaration applies BSD-3-Clause to these files.
 - Purpose: floppy and hard-drive symbols in the drive-status panel
 
 The SVG path geometry and embedded attribution comments are retained. Only the
-fill color was changed to remain legible on the dark panel.
+fill color was changed to remain legible in the drive-status panel.
 
 ## Build and runtime libraries
 
@@ -46,6 +46,13 @@ fill color was changed to remain legible on the dark panel.
   build/host system and is not vendored, so its implementation, version, and
   license depend on the distributor (OpenAL Soft is commonly used under
   LGPL-2.0-or-later).
+
+Official release packages deploy the Qt 6.8.3 and OpenAL Soft shared libraries
+needed by the application. They remain dynamically linked and retain their own
+licenses; corresponding project and license information is available at
+<https://www.qt.io/licensing/open-source-obligations> and
+<https://github.com/kcat/openal-soft>. The package does not restrict users from
+replacing those shared libraries with compatible modified builds.
 
 ## Historical and machine assets
 

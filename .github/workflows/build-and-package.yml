@@ -1,0 +1,189 @@
+name: Build, test, and package
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: 6.8.3
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2022
+            qt_arch: win64_msvc2022_64
+            package_arch: windows-x86_64
+            platform: windows
+          - name: Linux x86-64
+            os: ubuntu-22.04
+            qt_arch: linux_gcc_64
+            package_arch: linux-x86_64
+            platform: linux
+          - name: macOS Intel
+            os: macos-15-intel
+            qt_arch: clang_64
+            package_arch: macos-x86_64
+            platform: macos
+            osx_arch: x86_64
+            vcpkg_triplet: p2000c-x64-osx
+          - name: macOS Apple Silicon
+            os: macos-15
+            qt_arch: clang_64
+            package_arch: macos-arm64
+            platform: macos
+            osx_arch: arm64
+            vcpkg_triplet: p2000c-arm64-osx
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopenal-dev libfuse2 ninja-build
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          brew install ninja
+          vcpkg install openal-soft:${{ matrix.vcpkg_triplet }} \
+            --overlay-triplets="$PWD/packaging/vcpkg-triplets"
+
+      - name: Install Windows OpenAL
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: vcpkg install openal-soft:x64-windows
+
+      - name: Install Qt and Qt Installer Framework
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.qt_arch }}
+          tools: tools_ifw
+          cache: true
+
+      - name: Configure
+        shell: bash
+        run: |
+          args=(
+            -S . -B build
+            -DCMAKE_BUILD_TYPE=Release
+            -DP2000C_PACKAGE_ARCH=${{ matrix.package_arch }}
+          )
+          if [[ "${{ matrix.platform }}" == "windows" ]]; then
+            args+=(
+              -A x64
+              -DCMAKE_TOOLCHAIN_FILE="${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
+              -DVCPKG_TARGET_TRIPLET=x64-windows
+            )
+          else
+            args+=(-G Ninja)
+          fi
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            args+=(
+              -DCMAKE_TOOLCHAIN_FILE="${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
+              -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}
+              -DVCPKG_OVERLAY_TRIPLETS="$PWD/packaging/vcpkg-triplets"
+              -DCMAKE_OSX_ARCHITECTURES=${{ matrix.osx_arch }}
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+            )
+          fi
+          cmake "${args[@]}"
+
+      - name: Match release tag to package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < build/package-version.txt)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match project version v${version}." >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: cmake --build build --parallel --config Release
+
+      - name: Test before packaging
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Install and verify complete package tree
+        shell: bash
+        run: |
+          cmake --install build --config Release --prefix "$PWD/stage"
+          cmake \
+            -DINSTALL_ROOT="$PWD/stage" \
+            -DPLATFORM=${{ matrix.platform }} \
+            -DREQUIRE_RUNTIME=ON \
+            -P cmake/verify_install.cmake
+
+      - name: Build graphical offline installer
+        run: cpack --config build/CPackConfig.cmake -C Release -G IFW -B dist
+
+      - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < build/package-version.txt)"
+          cmake --install build --config Release --prefix "$PWD/AppDir/usr"
+          cmake -E copy packaging/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+          cmake -E copy \
+            AppDir/usr/share/applications/org.p2000c.emulator.desktop \
+            AppDir/org.p2000c.emulator.desktop
+          cmake -E copy \
+            AppDir/usr/share/icons/hicolor/scalable/apps/org.p2000c.emulator.svg \
+            AppDir/org.p2000c.emulator.svg
+          curl --fail --location --retry 3 \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            --output appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 VERSION="$version" ./appimagetool --appimage-extract-and-run \
+            --no-appstream AppDir \
+            "dist/p2000c-emulator-${version}-linux-x86_64.AppImage"
+          test -s "dist/p2000c-emulator-${version}-linux-x86_64.AppImage"
+
+      - name: Preserve tagged installers for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.package_arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested installers
+        uses: actions/download-artifact@v5
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

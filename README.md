@@ -59,6 +59,46 @@ Run the graphical shell with:
 ./build/p2000c
 ```
 
+## Packages and releases
+
+Release packages are built with Qt 6.8.3 for Windows 10 version 1809 or newer,
+macOS 12 or newer, and x86-64 Linux systems compatible with the Ubuntu 22.04
+build baseline. Four separate native graphical offline installers are produced:
+
+- Windows x86-64 (`.exe`)
+- Linux x86-64 (`.run`), plus a portable AppImage
+- macOS Intel (`.dmg`)
+- macOS Apple Silicon (`.dmg`)
+
+The graphical installers use Qt Installer Framework and include an uninstaller
+or maintenance tool. Each package contains the deployed Qt and OpenAL runtime,
+all emulator resources, pristine FLP and HDA templates, the IPL dump utility,
+the three PDF manuals, the README, and license and third-party notices. Linux
+packages also install a desktop entry and scalable application icon.
+
+Packages are intentionally unsigned. Windows SmartScreen and macOS Gatekeeper
+can therefore show an unknown-publisher warning. On macOS, use Finder's
+**Open** context-menu command to approve an unsigned download. No package
+claims to carry publisher verification or Apple notarization.
+
+The GitHub Actions workflow always builds and runs the complete test suite
+before it stages or packages any platform. Pull requests, branch pushes, and
+manual runs exercise the complete packaging pipeline but do not retain the
+installers. Pushing a version tag that exactly matches the CMake project
+version—for example `v0.1.0`—retains all five packages and publishes them in a
+new GitHub Release. A version mismatch or any failed test, deployment check,
+or package-content check prevents publication.
+
+For a local graphical installer build, install Qt Installer Framework, make
+its tools available on `PATH`, then run:
+
+```sh
+cmake -S . -B build-package -DCMAKE_BUILD_TYPE=Release
+cmake --build build-package --parallel
+ctest --test-dir build-package --output-on-failure
+cpack --config build-package/CPackConfig.cmake -C Release -G IFW
+```
+
 The verified IPL dump and default media are embedded in the application. At
 startup, drive A receives a disposable writable copy of `images/system.flp`;
 drive B remains available for another 640 KiB FLP. Two disposable 10 MiB HDA
@@ -118,6 +158,10 @@ remembered between runs.
 GPL-3.0-only license, runtime Qt version, implementation limitations, vendored
 and runtime dependencies, and the separate or uncertain rights status of the
 historical manuals, firmware, disk images, and bundled programs.
+
+**Help > Documentation** opens the installed P2000C system/service manual and
+the CP/M user and reference manuals in the operating system's default PDF
+viewer. Development builds fall back to the PDFs in the source tree.
 
 The **Machine > Emulation Speed** menu paces emulated time against a monotonic
 host clock. Authentic speed is four million Z80 T-states per second; selectable

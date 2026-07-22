@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.24)
 
 project(p2000c_emulator VERSION 0.1.0 LANGUAGES C CXX)
 
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
+     "${PROJECT_VERSION}\n")
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
@@ -84,11 +87,108 @@ if(P2000C_BUILD_APP)
   target_compile_definitions(p2000c PRIVATE
     P2000C_HAS_OPENAL=1
     P2000C_VERSION="${PROJECT_VERSION}"
+    P2000C_SOURCE_MANUALS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/manuals"
   )
   set_target_properties(p2000c PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_BUNDLE_NAME "P2000C Emulator"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.p2000c.emulator"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
   )
+  if(APPLE)
+    set_target_properties(p2000c PROPERTIES OUTPUT_NAME "P2000C Emulator")
+    set(P2000C_PACKAGE_DATA_DIR
+        "P2000C Emulator.app/Contents/Resources")
+  else()
+    include(GNUInstallDirs)
+    set(P2000C_PACKAGE_DATA_DIR
+        "${CMAKE_INSTALL_DATADIR}/p2000c-emulator")
+  endif()
+
+  install(TARGETS p2000c
+    BUNDLE DESTINATION . COMPONENT application
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT application
+  )
+  install(DIRECTORY manuals/
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/manuals"
+    COMPONENT application
+    FILES_MATCHING PATTERN "*.pdf"
+  )
+  install(DIRECTORY images/
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/images"
+    COMPONENT application
+    FILES_MATCHING PATTERN "*.flp" PATTERN "*.hda"
+  )
+  install(FILES tools/IPLDUMP.ASM tools/IPLDUMP.BIN
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/firmware"
+    COMPONENT application
+  )
+  install(FILES LICENSE THIRD_PARTY.md README.md
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses"
+    COMPONENT application
+  )
+  install(FILES
+      third_party/superzazu_z80/LICENSE
+      audio/LICENSE-MAME-SAMPLES.txt
+      icons/LICENSE-FONT-AWESOME.txt
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
+    COMPONENT application
+  )
+  if(EXISTS "${QT6_INSTALL_PREFIX}/LICENSES")
+    install(DIRECTORY "${QT6_INSTALL_PREFIX}/LICENSES/"
+      DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/qt"
+      COMPONENT application
+    )
+  endif()
+  set(P2000C_OPENAL_LICENSE "")
+  set(P2000C_VCPKG_OPENAL_LICENSE
+      "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/openal-soft/copyright")
+  if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET AND
+     EXISTS "${P2000C_VCPKG_OPENAL_LICENSE}")
+    set(P2000C_OPENAL_LICENSE
+        "${P2000C_VCPKG_OPENAL_LICENSE}")
+  elseif(EXISTS "/usr/share/doc/libopenal-dev/copyright")
+    set(P2000C_OPENAL_LICENSE "/usr/share/doc/libopenal-dev/copyright")
+  endif()
+  if(P2000C_OPENAL_LICENSE)
+    install(FILES "${P2000C_OPENAL_LICENSE}"
+      DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
+      RENAME LICENSE-OPENAL-SOFT.txt
+      COMPONENT application
+    )
+  endif()
+  install(FILES logo/logo-p2000c.svg
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}"
+    COMPONENT application
+  )
+  if(UNIX AND NOT APPLE)
+    install(FILES packaging/org.p2000c.emulator.desktop
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+      COMPONENT application
+    )
+    install(FILES logo/logo-p2000c.svg
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+      RENAME org.p2000c.emulator.svg
+      COMPONENT application
+    )
+  endif()
+
+  if(Qt6_VERSION VERSION_LESS 6.5)
+    qt_generate_deploy_app_script(
+      TARGET p2000c
+      FILENAME_VARIABLE p2000c_deploy_script
+      NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+  else()
+    qt_generate_deploy_app_script(
+      TARGET p2000c
+      OUTPUT_SCRIPT p2000c_deploy_script
+      NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+  endif()
+  install(SCRIPT "${p2000c_deploy_script}" COMPONENT application)
 endif()
 
 if(BUILD_TESTING)
@@ -163,6 +263,7 @@ if(BUILD_TESTING)
     target_compile_definitions(p2000c_app_test PRIVATE
       P2000C_HAS_OPENAL=1
       P2000C_VERSION="${PROJECT_VERSION}"
+      P2000C_SOURCE_MANUALS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/manuals"
     )
     add_test(
       NAME p2000c_app_test
@@ -172,4 +273,71 @@ if(BUILD_TESTING)
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
   endif()
+endif()
+
+if(P2000C_BUILD_APP)
+  set(CPACK_PACKAGE_NAME "P2000C Emulator")
+  set(CPACK_PACKAGE_VENDOR "P2000C Emulator Project")
+  set(CPACK_PACKAGE_CONTACT "https://github.com/ifilot/p2000c-emulator")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+      "An emulator for the Philips P2000C portable computer")
+  set(CPACK_PACKAGE_HOMEPAGE_URL
+      "https://github.com/ifilot/p2000c-emulator")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+  set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+  set(CPACK_COMPONENTS_ALL application)
+  set(CPACK_GENERATOR "IFW")
+
+  if(NOT P2000C_PACKAGE_ARCH)
+    string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}"
+           P2000C_PACKAGE_ARCH)
+  endif()
+  set(CPACK_PACKAGE_FILE_NAME
+      "p2000c-emulator-${PROJECT_VERSION}-${P2000C_PACKAGE_ARCH}")
+  set(CPACK_PACKAGE_INSTALL_DIRECTORY "P2000C Emulator")
+
+  set(CPACK_IFW_PACKAGE_NAME "P2000C Emulator")
+  set(CPACK_IFW_PACKAGE_TITLE "P2000C Emulator Setup")
+  set(CPACK_IFW_PACKAGE_PUBLISHER "P2000C Emulator Project")
+  set(CPACK_IFW_PRODUCT_URL "https://github.com/ifilot/p2000c-emulator")
+  set(CPACK_IFW_PACKAGE_WIZARD_STYLE "Modern")
+  set(CPACK_IFW_PACKAGE_WIZARD_SHOW_PAGE_LIST OFF)
+  set(CPACK_IFW_PACKAGE_TITLE_COLOR "#913939")
+  set(CPACK_IFW_PACKAGE_ALLOW_NON_ASCII_CHARACTERS ON)
+  set(CPACK_IFW_PACKAGE_ALLOW_SPACE_IN_PATH ON)
+  set(CPACK_IFW_PACKAGE_MAINTENANCE_TOOL_NAME
+      "P2000C Emulator Maintenance")
+  set(CPACK_IFW_ARCHIVE_COMPRESSION 9)
+  if(WIN32)
+    set(CPACK_IFW_TARGET_DIRECTORY
+        "@ApplicationsDirX64@/P2000C Emulator")
+    set(CPACK_PACKAGE_EXECUTABLES "p2000c" "P2000C Emulator")
+    set(CPACK_CREATE_DESKTOP_LINKS "p2000c")
+    set(CPACK_IFW_PACKAGE_RUN_PROGRAM "@TargetDir@/bin/p2000c.exe")
+  elseif(APPLE)
+    set(CPACK_IFW_TARGET_DIRECTORY
+        "@ApplicationsDir@/P2000C Emulator")
+    set(CPACK_IFW_PACKAGE_RUN_PROGRAM
+        "@TargetDir@/P2000C Emulator.app/Contents/MacOS/P2000C Emulator")
+  else()
+    set(CPACK_IFW_TARGET_DIRECTORY "@HomeDir@/P2000C Emulator")
+    set(CPACK_IFW_PACKAGE_RUN_PROGRAM "@TargetDir@/bin/p2000c")
+  endif()
+  set(CPACK_IFW_PACKAGE_RUN_PROGRAM_DESCRIPTION "Run P2000C Emulator")
+
+  include(CPackComponent)
+  cpack_add_component(application
+    DISPLAY_NAME "P2000C Emulator"
+    DESCRIPTION "Emulator, runtime libraries, disk templates, and manuals"
+    REQUIRED
+  )
+  include(CPackIFW)
+  cpack_ifw_configure_component(application
+    FORCED_INSTALLATION
+    NAME "org.p2000c.emulator"
+    VERSION "${PROJECT_VERSION}"
+    LICENSES "GNU GPL version 3" "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+  )
+  include(CPack)
 endif()

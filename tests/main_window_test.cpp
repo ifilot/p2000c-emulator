@@ -479,10 +479,21 @@ int main(int argc, char* argv[]) {
   QAction* sound_volume =
       find_named_action(&window, "hardwareSoundVolumeAction");
   QAction* about = find_named_action(&window, "aboutAction");
+  QAction* system_manual =
+      find_named_action(&window, "systemReferenceManualAction");
+  QAction* cpm_user_guide = find_named_action(&window, "cpmUserGuideAction");
+  QAction* cpm_reference =
+      find_named_action(&window, "cpmReferenceManualAction");
   QAction* hardware_delays =
       find_named_action(&window, "enableHardwareDelaysAction");
   if (display == nullptr || resolution == nullptr || screen_color == nullptr ||
       screenshot == nullptr || sound_volume == nullptr || about == nullptr ||
+      system_manual == nullptr || cpm_user_guide == nullptr ||
+      cpm_reference == nullptr || !system_manual->isEnabled() ||
+      !cpm_user_guide->isEnabled() || !cpm_reference->isEnabled() ||
+      !QFileInfo(system_manual->data().toString()).isFile() ||
+      !QFileInfo(cpm_user_guide->data().toString()).isFile() ||
+      !QFileInfo(cpm_reference->data().toString()).isFile() ||
       hardware_delays == nullptr ||
       window.windowIcon().isNull() ||
       hardware_delays->isChecked() ||

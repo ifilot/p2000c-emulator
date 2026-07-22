@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=P2000C Emulator
+Comment=Emulate the Philips P2000C portable computer
+Exec=p2000c
+Icon=org.p2000c.emulator
+Terminal=false
+Categories=Game;Emulator;
+Keywords=P2000C;Philips;CP/M;Emulator;

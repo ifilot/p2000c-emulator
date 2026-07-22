@@ -3,7 +3,9 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -33,6 +35,7 @@
 #include <QTimer>
 #include <QTabWidget>
 #include <QTextBrowser>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <array>
@@ -315,6 +318,23 @@ QString compact_filename(const std::filesystem::path& path) {
 
 /** Escapes menu mnemonic markers present in a mounted filename. */
 QString menu_safe(QString text) { return text.replace('&', "&&"); }
+
+/** Finds one installed manual, with the source tree as a developer fallback. */
+QString manual_path(const QString& filename) {
+  const QDir executable_directory(QCoreApplication::applicationDirPath());
+  const std::array<QString, 4> directories = {
+      executable_directory.filePath("../Resources/manuals"),
+      executable_directory.filePath("../share/p2000c-emulator/manuals"),
+      executable_directory.filePath("manuals"),
+      QStringLiteral(P2000C_SOURCE_MANUALS_DIR)};
+  for (const QString& directory : directories) {
+    const QFileInfo candidate(QDir(directory).filePath(filename));
+    if (candidate.isFile()) {
+      return candidate.canonicalFilePath();
+    }
+  }
+  return {};
+}
 
 QString recent_images_key(bool hard_disk, std::size_t drive) {
   return QString("media/recent/%1%2")
@@ -830,6 +850,37 @@ void MainWindow::create_menus() {
   });
 
   QMenu* help_menu = menuBar()->addMenu("&Help");
+  QMenu* documentation_menu = help_menu->addMenu("&Documentation");
+  documentation_menu->setObjectName("documentationMenu");
+  struct ManualEntry {
+      const char* title;
+      const char* filename;
+      const char* object_name;
+  };
+  constexpr std::array<ManualEntry, 3> kManuals = {{
+      {"P2000C System Reference and Service Manual",
+       "P2000C-SystemRefServiceManual.pdf", "systemReferenceManualAction"},
+      {"P2519 CP/M User Guide", "P2519CPM_UserGuide.pdf",
+       "cpmUserGuideAction"},
+      {"P2519 CP/M Reference Manual", "P2519_CPM_Reference.pdf",
+       "cpmReferenceManualAction"},
+  }};
+  for (const ManualEntry& manual : kManuals) {
+    QAction* action = documentation_menu->addAction(manual.title);
+    action->setObjectName(manual.object_name);
+    const QString path = manual_path(manual.filename);
+    action->setData(path);
+    action->setToolTip(path.isEmpty() ? "Manual was not found." : path);
+    action->setEnabled(!path.isEmpty());
+    connect(action, &QAction::triggered, this, [this, path]() {
+      if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+        QMessageBox::warning(this, "Cannot Open Manual",
+                             "No application is available to open:\n" + path);
+      }
+      display_->setFocus();
+    });
+  }
+  help_menu->addSeparator();
   QAction* about = help_menu->addAction("&About P2000C Emulator...");
   about->setObjectName("aboutAction");
   connect(about, &QAction::triggered, this, &MainWindow::open_about);
