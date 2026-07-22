@@ -40,12 +40,15 @@ target_link_libraries(p2000c_media_info PRIVATE p2000c_core)
 
 if(P2000C_BUILD_APP)
   find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
+  find_package(OpenAL REQUIRED)
   qt_standard_project_setup()
 
   qt_add_executable(p2000c
     src/app/display_widget.cpp
     src/app/display_widget.h
     src/app/main.cpp
+    src/app/hardware_audio.cpp
+    src/app/hardware_audio.h
     src/app/main_window.cpp
     src/app/main_window.h
     src/app/screen_color_dialog.cpp
@@ -55,15 +58,33 @@ if(P2000C_BUILD_APP)
     PREFIX "/"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}"
     FILES
+      "audio/525_seek_6ms.wav"
+      "audio/525_spin_end.wav"
+      "audio/525_spin_loaded.wav"
+      "audio/525_spin_start_loaded.wav"
+      "audio/525_step_1_1.wav"
+      "audio/LICENSE-MAME-SAMPLES.txt"
       "font/P2000C font mini.png"
+      "icons/floppy-disk.svg"
+      "icons/hard-drive.svg"
+      "icons/LICENSE-FONT-AWESOME.txt"
+      "logo/logo-p2000c.svg"
       "images/blank.hda"
       "images/chess.flp"
       "images/ipldump.flp"
       "images/system.flp"
       "images/zork.flp"
       "tools/IPLDUMP.BIN"
+      "third_party/superzazu_z80/LICENSE"
+      "LICENSE"
+      "THIRD_PARTY.md"
   )
   target_link_libraries(p2000c PRIVATE p2000c_core Qt6::Widgets)
+  target_link_libraries(p2000c PRIVATE OpenAL::OpenAL)
+  target_compile_definitions(p2000c PRIVATE
+    P2000C_HAS_OPENAL=1
+    P2000C_VERSION="${PROJECT_VERSION}"
+  )
   set_target_properties(p2000c PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
@@ -105,6 +126,8 @@ if(BUILD_TESTING)
       tests/main_window_test.cpp
       src/app/display_widget.cpp
       src/app/display_widget.h
+      src/app/hardware_audio.cpp
+      src/app/hardware_audio.h
       src/app/main_window.cpp
       src/app/main_window.h
       src/app/screen_color_dialog.cpp
@@ -114,15 +137,33 @@ if(BUILD_TESTING)
       PREFIX "/"
       BASE "${CMAKE_CURRENT_SOURCE_DIR}"
       FILES
+        "audio/525_seek_6ms.wav"
+        "audio/525_spin_end.wav"
+        "audio/525_spin_loaded.wav"
+        "audio/525_spin_start_loaded.wav"
+        "audio/525_step_1_1.wav"
+        "audio/LICENSE-MAME-SAMPLES.txt"
         "font/P2000C font mini.png"
+        "icons/floppy-disk.svg"
+        "icons/hard-drive.svg"
+        "icons/LICENSE-FONT-AWESOME.txt"
+        "logo/logo-p2000c.svg"
         "images/blank.hda"
         "images/chess.flp"
         "images/ipldump.flp"
         "images/system.flp"
         "images/zork.flp"
         "tools/IPLDUMP.BIN"
+        "third_party/superzazu_z80/LICENSE"
+        "LICENSE"
+        "THIRD_PARTY.md"
     )
     target_link_libraries(p2000c_app_test PRIVATE p2000c_core Qt6::Widgets)
+    target_link_libraries(p2000c_app_test PRIVATE OpenAL::OpenAL)
+    target_compile_definitions(p2000c_app_test PRIVATE
+      P2000C_HAS_OPENAL=1
+      P2000C_VERSION="${PROJECT_VERSION}"
+    )
     add_test(
       NAME p2000c_app_test
       COMMAND p2000c_app_test ${CMAKE_CURRENT_BINARY_DIR}/test_app_data

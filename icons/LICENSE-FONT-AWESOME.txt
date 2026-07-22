@@ -1,0 +1,14 @@
+Font Awesome Free 7.3.1
+Copyright 2026 Fonticons, Inc.
+https://fontawesome.com/
+
+The floppy-disk and hard-drive SVG icons in this directory come from Font
+Awesome Free 7.3.1. Font Awesome licenses SVG icons under the Creative Commons
+Attribution 4.0 International license:
+
+https://creativecommons.org/licenses/by/4.0/
+https://fontawesome.com/license/free
+
+The path geometry is unchanged. Its fill color was changed from `currentColor`
+to `#aebbc0` so the icons remain legible on the emulator's dark drive panel.
+The original attribution comments are retained in both SVG files.

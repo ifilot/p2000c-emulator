@@ -116,6 +116,7 @@ void Terminal::receive(std::uint8_t value) {
       }
       break;
     case 0x07:
+      ++bell_revision_;
       break;
     case 0x08:
     case 0x15:

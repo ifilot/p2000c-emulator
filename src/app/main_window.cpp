@@ -2,33 +2,225 @@
 
 #include <QAction>
 #include <QActionGroup>
-#include <QCryptographicHash>
+#include <QApplication>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFont>
 #include <QFrame>
+#include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QKeySequence>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPalette>
+#include <QPushButton>
+#include <QRadialGradient>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QSlider>
 #include <QTimer>
+#include <QTabWidget>
+#include <QTextBrowser>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <array>
 #include <optional>
 #include <string>
 
 #include "app/display_widget.h"
+#include "app/hardware_audio.h"
 #include "app/screen_color_dialog.h"
 
 namespace p2000c {
+
+namespace {
+
+void apply_p2000c_theme() {
+  QPalette palette;
+  palette.setColor(QPalette::Window, QColor("#e8dcb3"));
+  palette.setColor(QPalette::WindowText, QColor("#262626"));
+  palette.setColor(QPalette::Base, QColor("#f5eac6"));
+  palette.setColor(QPalette::AlternateBase, QColor("#e5d6ae"));
+  palette.setColor(QPalette::ToolTipBase, QColor("#f5eac6"));
+  palette.setColor(QPalette::ToolTipText, QColor("#262626"));
+  palette.setColor(QPalette::Text, QColor("#262626"));
+  palette.setColor(QPalette::Button, QColor("#e5d6ae"));
+  palette.setColor(QPalette::ButtonText, QColor("#262626"));
+  palette.setColor(QPalette::BrightText, QColor("#f5eac6"));
+  palette.setColor(QPalette::Highlight, QColor("#b5a065"));
+  palette.setColor(QPalette::HighlightedText, QColor("#262626"));
+  palette.setColor(QPalette::Link, QColor("#913939"));
+  palette.setColor(QPalette::LinkVisited, QColor("#70705c"));
+  QApplication::setPalette(palette);
+  qApp->setStyleSheet(QStringLiteral(R"(
+    QMainWindow, QDialog { background: #e8dcb3; color: #262626; }
+    QWidget#emulatorCentral { background: #d6c89a; }
+    QMenuBar {
+      background: #e5d6ae;
+      color: #262626;
+      border-bottom: 1px solid #a38a45;
+      padding: 2px;
+    }
+    QMenuBar::item { background: transparent; padding: 5px 9px; }
+    QMenuBar::item:selected, QMenuBar::item:pressed {
+      background: #f5eac6;
+      border-radius: 3px;
+    }
+    QMenu {
+      background: #f5eac6;
+      color: #262626;
+      border: 1px solid #a38a45;
+      padding: 4px;
+    }
+    QMenu::item { padding: 5px 28px 5px 24px; }
+    QMenu::item:selected { background: #b5a065; color: #262626; }
+    QMenu::item:disabled { color: #70705c; }
+    QMenu::separator { height: 1px; background: #d6c89a; margin: 4px 8px; }
+    QStatusBar {
+      background: #e5d6ae;
+      color: #262626;
+      border-top: 1px solid #a38a45;
+    }
+    QFrame#driveActivityPanel {
+      background: #f5eac6;
+      color: #262626;
+      border: 1px solid #b5a065;
+      border-radius: 8px;
+    }
+    QFrame#driveActivityPanel QLabel { color: #262626; background: transparent; }
+    QTabWidget::pane { border: 1px solid #b5a065; background: #f5eac6; }
+    QTabBar::tab {
+      background: #d6c89a;
+      color: #262626;
+      border: 1px solid #b5a065;
+      padding: 6px 10px;
+    }
+    QTabBar::tab:selected { background: #f5eac6; border-bottom-color: #f5eac6; }
+    QTextEdit, QTextBrowser, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+      background: #f5eac6;
+      color: #262626;
+      border: 1px solid #b5a065;
+      border-radius: 3px;
+      selection-background-color: #b5a065;
+      selection-color: #262626;
+    }
+    QPushButton {
+      background: #e5d6ae;
+      color: #262626;
+      border: 1px solid #a38a45;
+      border-radius: 4px;
+      padding: 5px 12px;
+    }
+    QPushButton:hover { background: #f5eac6; }
+    QPushButton:pressed { background: #b5a065; }
+    QPushButton:disabled { color: #70705c; border-color: #d6c89a; }
+    QGroupBox { border: 1px solid #b5a065; border-radius: 5px; margin-top: 8px; }
+    QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+    QToolTip { background: #f5eac6; color: #262626; border: 1px solid #a38a45; }
+  )"));
+}
+
+}  // namespace
+
+/** A glassy, smoothly fading drive LED driven by real controller activity. */
+class DriveLed : public QWidget {
+ public:
+  explicit DriveLed(QWidget* parent = nullptr) : QWidget(parent) {
+    setFixedSize(24, 24);
+    fade_timer_.setInterval(16);
+    connect(&fade_timer_, &QTimer::timeout, this, [this]() {
+      update();
+      if (pulse_clock_.isValid() && pulse_clock_.elapsed() > hold_ms_ + 420) {
+        fade_timer_.stop();
+      }
+    });
+  }
+
+  void pulse(P2000cMachine::StorageOperation operation, int duration_ms) {
+    using Operation = P2000cMachine::StorageOperation;
+    color_ = operation == Operation::kWrite
+                 ? QColor(255, 96, 38)
+                 : operation == Operation::kSeek
+                       ? QColor(255, 184, 45)
+                       : operation == Operation::kMotorStart ||
+                                 operation == Operation::kMotorStop
+                             ? QColor(80, 205, 255)
+                             : QColor(70, 255, 138);
+    hold_ms_ = std::clamp(duration_ms, 35, 450);
+    pulse_clock_.restart();
+    fade_timer_.start();
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    const qreal elapsed = pulse_clock_.isValid() ? pulse_clock_.elapsed() : 9999;
+    const qreal intensity =
+        elapsed <= hold_ms_
+            ? 1.0
+            : std::exp(-(elapsed - hold_ms_) / 115.0);
+    // Even unlit indicator lamps retain the colored, glossy appearance of
+    // their moulded plastic lens. Activity adds emitted light on top of it.
+    const qreal lens_intensity = 0.13 + intensity * 0.87;
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    if (intensity > 0.015) {
+      QRadialGradient glow(rect().center(), width() * 0.52);
+      QColor glow_color = color_;
+      glow_color.setAlphaF(std::min(0.55, intensity * 0.5));
+      glow.setColorAt(0.0, glow_color);
+      glow_color.setAlpha(0);
+      glow.setColorAt(1.0, glow_color);
+      painter.fillRect(rect(), glow);
+    }
+    const QRectF bezel(4.5, 4.5, 15.0, 15.0);
+    QLinearGradient metal(bezel.topLeft(), bezel.bottomRight());
+    metal.setColorAt(0.0, QColor(105, 102, 94));
+    metal.setColorAt(0.30, QColor(181, 175, 160));
+    metal.setColorAt(0.58, QColor(91, 89, 83));
+    metal.setColorAt(1.0, QColor(145, 140, 129));
+    painter.setPen(QPen(QColor(67, 65, 60), 0.7));
+    painter.setBrush(metal);
+    painter.drawEllipse(bezel);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(8, 13, 12));
+    painter.drawEllipse(bezel.adjusted(1.25, 1.25, -1.25, -1.25));
+    QRadialGradient lens(QPointF(10.0, 9.0), 10.0);
+    const QColor active = QColor::fromRgbF(
+        color_.redF() * lens_intensity,
+        color_.greenF() * lens_intensity,
+        color_.blueF() * lens_intensity);
+    lens.setColorAt(0.0, active.lighter(155));
+    lens.setColorAt(0.38, active);
+    lens.setColorAt(1.0, QColor(4, 17, 10));
+    painter.setBrush(lens);
+    painter.drawEllipse(bezel.adjusted(2.0, 2.0, -2.0, -2.0));
+    painter.setBrush(
+        QColor(255, 255, 245, qRound(52 + 86 * intensity)));
+    painter.drawEllipse(QRectF(8.0, 7.5, 3.2, 2.2));
+    painter.setBrush(QColor(255, 255, 255, qRound(18 + 22 * intensity)));
+    painter.drawEllipse(QRectF(10.8, 8.1, 5.0, 3.0));
+  }
+
+ private:
+  QElapsedTimer pulse_clock_;
+  QTimer fade_timer_{this};
+  QColor color_{70, 255, 138};
+  int hold_ms_ = 0;
+};
+
 namespace {
 
 struct DisplayResolution {
@@ -70,9 +262,14 @@ CrtEffects load_crt_effects(const QSettings& settings) {
       settings.value("display/effects/curvature", defaults.curvature).toBool(),
       settings.value("display/effects/vignette", defaults.vignette).toBool(),
       settings.value("display/effects/noise", defaults.noise).toBool(),
+      settings.value("display/effects/flicker", defaults.flicker).toBool(),
       settings
           .value("display/effects/persistenceHalfLifeMs",
                  defaults.persistence_half_life_ms)
+          .toInt(),
+      settings
+          .value("display/effects/brightnessPercent",
+                 defaults.brightness_percent)
           .toInt(),
   };
 }
@@ -85,8 +282,11 @@ void save_crt_effects(QSettings* settings, const CrtEffects& effects) {
   settings->setValue("display/effects/curvature", effects.curvature);
   settings->setValue("display/effects/vignette", effects.vignette);
   settings->setValue("display/effects/noise", effects.noise);
+  settings->setValue("display/effects/flicker", effects.flicker);
   settings->setValue("display/effects/persistenceHalfLifeMs",
                      effects.persistence_half_life_ms);
+  settings->setValue("display/effects/brightnessPercent",
+                     effects.brightness_percent);
 }
 
 /** Converts a QString to a Unicode-aware host filesystem path. */
@@ -116,112 +316,68 @@ QString compact_filename(const std::filesystem::path& path) {
 /** Escapes menu mnemonic markers present in a mounted filename. */
 QString menu_safe(QString text) { return text.replace('&', "&&"); }
 
-/** Returns the expected writable path for one bundled image. */
-QString bundled_media_path(const QString& filename) {
-  return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
-      .filePath("media/" + filename);
+QString recent_images_key(bool hard_disk, std::size_t drive) {
+  return QString("media/recent/%1%2")
+      .arg(hard_disk ? "hardDisk" : "floppy")
+      .arg(drive);
 }
 
-/** Returns the per-user writable directory for bundled media copies. */
-std::optional<QString> writable_media_directory(QString* error) {
-  const QString application_data =
-      QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-  if (application_data.isEmpty()) {
-    *error = "No writable application-data directory is available.";
-    return std::nullopt;
+bool copy_image_file(const QString& source, const QString& destination,
+                     QString* error) {
+  QFile input(source);
+  if (!input.open(QIODevice::ReadOnly)) {
+    *error = "Could not read the mounted image " + source + ".";
+    return false;
   }
-  const QString media_directory = QDir(application_data).filePath("media");
-  if (!QDir().mkpath(media_directory)) {
-    *error = "Could not create the bundled-media working directory.";
-    return std::nullopt;
+  QSaveFile output(destination);
+  if (!output.open(QIODevice::WriteOnly) ||
+      output.write(input.readAll()) != input.size() || !output.commit()) {
+    *error = "Could not save the image to " + destination + ".";
+    return false;
   }
-  return media_directory;
+  return true;
 }
 
-/** Copies a resource to a persistent writable working file when absent. */
-std::optional<QString> writable_resource_copy(const QString& resource,
-                                              const QString& filename,
-                                              QString* error) {
-  const std::optional<QString> directory = writable_media_directory(error);
-  if (!directory.has_value()) {
+/** Recreates a disposable session copy from an immutable bundled resource. */
+std::optional<QString> temporary_resource_copy(const QString& resource,
+                                               const QString& directory,
+                                               const QString& filename,
+                                               QString* error) {
+  if (directory.isEmpty() || !QDir().mkpath(directory)) {
+    *error = "Could not create the temporary media session directory.";
     return std::nullopt;
   }
-  const QString destination = QDir(*directory).filePath(filename);
-  if (QFileInfo::exists(destination)) {
-    return destination;
-  }
-
   QFile input(resource);
   if (!input.open(QIODevice::ReadOnly)) {
     *error = "Could not open bundled media resource " + resource + ".";
     return std::nullopt;
   }
+  const QByteArray bytes = input.readAll();
+  const QString destination = QDir(directory).filePath(filename);
   QSaveFile output(destination);
-  if (!output.open(QIODevice::WriteOnly) || output.write(input.readAll()) < 0 ||
-      !output.commit()) {
-    *error = "Could not create writable bundled media " + destination + ".";
+  if (!output.open(QIODevice::WriteOnly) ||
+      output.write(bytes) != bytes.size() || !output.commit()) {
+    *error = "Could not create temporary media " + destination + ".";
     return std::nullopt;
   }
   return destination;
 }
 
-/** Copies immutable bundled media into a directory keyed by its contents. */
-std::optional<QString> writable_versioned_resource_copy(
-    const QString& resource, const QString& filename, QString* error) {
-  QFile input(resource);
-  if (!input.open(QIODevice::ReadOnly)) {
-    *error = "Could not open bundled media resource " + resource + ".";
-    return std::nullopt;
-  }
-  const QByteArray image = input.readAll();
-  const QString version = QString::fromLatin1(
-      QCryptographicHash::hash(image, QCryptographicHash::Sha256)
-          .toHex()
-          .left(16));
-  const std::optional<QString> media_directory =
-      writable_media_directory(error);
-  if (!media_directory.has_value()) {
-    return std::nullopt;
-  }
-  const QString directory =
-      QDir(*media_directory).filePath("bundled/" + version);
-  if (!QDir().mkpath(directory)) {
-    *error = "Could not create the versioned bundled-media directory.";
+/** Recreates a disposable unformatted floppy for the current session. */
+std::optional<QString> temporary_blank_floppy(const QString& directory,
+                                              const QString& filename,
+                                              QString* error) {
+  if (directory.isEmpty() || !QDir().mkpath(directory)) {
+    *error = "Could not create the temporary media session directory.";
     return std::nullopt;
   }
   const QString destination = QDir(directory).filePath(filename);
-  if (QFileInfo::exists(destination)) {
-    return destination;
-  }
-
-  QSaveFile output(destination);
-  if (!output.open(QIODevice::WriteOnly) ||
-      output.write(image) != image.size() || !output.commit()) {
-    *error = "Could not create writable bundled media " + destination + ".";
-    return std::nullopt;
-  }
-  return destination;
-}
-
-/** Creates an unformatted 80x2x16x256 raw floppy. */
-std::optional<QString> writable_blank_floppy(const QString& filename,
-                                             QString* error) {
-  const std::optional<QString> directory = writable_media_directory(error);
-  if (!directory.has_value()) {
-    return std::nullopt;
-  }
-  const QString destination = QDir(*directory).filePath(filename);
-  if (QFileInfo::exists(destination)) {
-    return destination;
-  }
-
   const QByteArray image(static_cast<qsizetype>(RawDiskImage::kFloppySize),
                          static_cast<char>(0xe5));
-
   QSaveFile output(destination);
   if (!output.open(QIODevice::WriteOnly) ||
       output.write(image) != image.size() || !output.commit()) {
-    *error = "Could not create blank bundled media " + destination + ".";
+    *error = "Could not create temporary blank floppy " + destination + ".";
     return std::nullopt;
   }
   return destination;
@@ -230,13 +386,59 @@ std::optional<QString> writable_blank_floppy(const QString& filename,
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+  apply_p2000c_theme();
   setWindowTitle("Philips P2000C Emulator");
-  display_ = new DisplayWidget(this);
-  setCentralWidget(display_);
+  setWindowIcon(QIcon(":/logo/logo-p2000c.svg"));
+  auto* central = new QWidget(this);
+  central->setObjectName("emulatorCentral");
+  auto* central_layout = new QHBoxLayout(central);
+  central_layout->setContentsMargins(8, 8, 8, 8);
+  central_layout->setSpacing(10);
+  display_ = new DisplayWidget(central);
+  central_layout->addWidget(display_, 0, Qt::AlignCenter);
+  auto* drive_panel = new QFrame(central);
+  drive_panel->setObjectName("driveActivityPanel");
+  drive_panel->setFrameShape(QFrame::StyledPanel);
+  drive_panel->setMinimumWidth(205);
+  drive_panel->setMaximumWidth(235);
+  drive_panel_layout_ = new QVBoxLayout(drive_panel);
+  drive_panel_layout_->setContentsMargins(12, 12, 12, 12);
+  drive_panel_layout_->setSpacing(8);
+  auto* panel_title = new QLabel("DRIVE STATUS", drive_panel);
+  QFont panel_font = panel_title->font();
+  panel_font.setBold(true);
+  panel_font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
+  panel_title->setFont(panel_font);
+  panel_title->setAlignment(Qt::AlignCenter);
+  drive_panel_layout_->addWidget(panel_title);
+  central_layout->addWidget(drive_panel, 0, Qt::AlignTop);
+  setCentralWidget(central);
   display_->set_key_handler(
       [this](std::uint8_t value) { machine_.queue_key(value); });
   statusBar();
   create_menus();
+  drive_panel_layout_->addStretch(1);
+  hardware_audio_ = std::make_unique<HardwareAudio>();
+  QSettings settings;
+  audio_enabled_ = settings.value("audio/enabled", true).toBool();
+  const int audio_volume =
+      std::clamp(settings.value("audio/volume", 70).toInt(), 0, 100);
+  hardware_audio_->set_volume(audio_volume / 100.0);
+  machine_.set_storage_activity_handler(
+      [this](const P2000cMachine::StorageActivity& activity) {
+        DriveLed* led = nullptr;
+        if (activity.drive < 2) {
+          led = activity.device == P2000cMachine::StorageDevice::kFloppy
+                    ? floppy_activity_leds_[activity.drive]
+                    : hard_disk_activity_leds_[activity.drive];
+        }
+        if (led != nullptr) {
+          led->pulse(activity.operation, activity.duration_ms);
+        }
+        if (audio_enabled_) {
+          hardware_audio_->play_storage_activity(activity);
+        }
+      });
   refresh_media_indicators();
 
   QFile bundled_rom(":/tools/IPLDUMP.BIN");
@@ -261,6 +463,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   refresh_screen();
 }
 
+MainWindow::~MainWindow() = default;
+
 bool MainWindow::mount_floppy(const std::filesystem::path& path,
                               std::size_t drive) {
   if (drive >= 2) {
@@ -279,6 +483,12 @@ bool MainWindow::mount_floppy(const std::filesystem::path& path,
   statusBar()->showMessage(
       QString("Floppy %1 mounted read/write: ").arg(drive_letter) +
       qstring_path(path));
+  save_floppy_actions_[drive]->setEnabled(true);
+  const QString mounted_path = qstring_path(path);
+  if (!mounted_path.startsWith(media_session_.path() + QDir::separator())) {
+    temporary_floppy_paths_[drive].clear();
+    remember_recent_image(mounted_path, false, drive);
+  }
   refresh_media_indicators();
   refresh_screen();
   return true;
@@ -296,11 +506,104 @@ bool MainWindow::mount_hard_disk(const std::filesystem::path& path,
   statusBar()->showMessage(
       QString("SASI hard disk %1 mounted read/write: ").arg(drive + 1) +
       qstring_path(path));
+  save_hard_disk_actions_[drive]->setEnabled(true);
+  const QString mounted_path = qstring_path(path);
+  if (!mounted_path.startsWith(media_session_.path() + QDir::separator())) {
+    temporary_hard_disk_paths_[drive].clear();
+    remember_recent_image(mounted_path, true, drive);
+  }
   refresh_media_indicators();
   return true;
 }
 
+void MainWindow::remember_recent_image(const QString& path, bool hard_disk,
+                                       std::size_t drive) {
+  QSettings settings;
+  const QString key = recent_images_key(hard_disk, drive);
+  QStringList recent = settings.value(key).toStringList();
+  const QString absolute = QFileInfo(path).absoluteFilePath();
+  recent.removeAll(absolute);
+  recent.prepend(absolute);
+  while (recent.size() > 5) {
+    recent.removeLast();
+  }
+  settings.setValue(key, recent);
+  refresh_recent_image_menus();
+}
+
+void MainWindow::refresh_recent_image_menus() {
+  QSettings settings;
+  for (std::size_t drive = 0; drive < 2; ++drive) {
+    for (const bool hard_disk : {false, true}) {
+      QMenu* menu = hard_disk ? recent_hard_disk_menus_[drive]
+                              : recent_floppy_menus_[drive];
+      if (menu == nullptr) {
+        continue;
+      }
+      menu->clear();
+      const QStringList recent =
+          settings.value(recent_images_key(hard_disk, drive)).toStringList();
+      for (const QString& path : recent) {
+        QAction* action = menu->addAction(menu_safe(QFileInfo(path).fileName()));
+        action->setToolTip(path);
+        action->setEnabled(QFileInfo::exists(path));
+        connect(action, &QAction::triggered, this,
+                [this, path, hard_disk, drive]() {
+                  if (hard_disk) {
+                    mount_hard_disk(filesystem_path(path), drive);
+                  } else {
+                    mount_floppy(filesystem_path(path), drive);
+                  }
+                });
+      }
+      if (recent.isEmpty()) {
+        QAction* empty = menu->addAction("No recent images");
+        empty->setEnabled(false);
+      }
+    }
+  }
+}
+
 void MainWindow::create_menus() {
+  auto add_drive_card = [this](const QString& title,
+                               const QString& status_object_name,
+                               const QString& icon_resource,
+                               QLabel** status, DriveLed** led) {
+    auto* card = new QFrame(this);
+    card->setObjectName(QString(status_object_name).replace("Status", "Card"));
+    card->setFrameShape(QFrame::NoFrame);
+    card->setStyleSheet("QFrame { background: transparent; border: none; }");
+    auto* card_layout = new QHBoxLayout(card);
+    card_layout->setContentsMargins(2, 5, 2, 5);
+    card_layout->setSpacing(7);
+    *led = new DriveLed(card);
+    (*led)->setObjectName(
+        QString(status_object_name).replace("Status", "ActivityLed"));
+    card_layout->addWidget(*led, 0, Qt::AlignTop);
+    auto* icon = new QLabel(card);
+    icon->setObjectName(
+        QString(status_object_name).replace("Status", "TypeIcon"));
+    icon->setPixmap(QIcon(icon_resource).pixmap(QSize(25, 29)));
+    icon->setFixedSize(27, 31);
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setToolTip(title);
+    card_layout->addWidget(icon, 0, Qt::AlignTop);
+    auto* text_layout = new QVBoxLayout();
+    text_layout->setSpacing(1);
+    auto* heading = new QLabel(title, card);
+    QFont heading_font = heading->font();
+    heading_font.setBold(true);
+    heading->setFont(heading_font);
+    text_layout->addWidget(heading);
+    *status = new QLabel("Empty", card);
+    (*status)->setObjectName(status_object_name);
+    (*status)->setWordWrap(true);
+    (*status)->setStyleSheet("color: #5f6b5d; border: none;");
+    text_layout->addWidget(*status);
+    card_layout->addLayout(text_layout, 1);
+    drive_panel_layout_->addWidget(card);
+  };
+
   QMenu* machine_menu = menuBar()->addMenu("&Machine");
   QAction* load_rom = machine_menu->addAction("Load &IPL ROM...");
   connect(load_rom, &QAction::triggered, this, &MainWindow::load_ipl_rom);
@@ -357,6 +660,16 @@ void MainWindow::create_menus() {
     open->setObjectName(QString("openFloppy%1Action").arg(drive_letter));
     connect(open, &QAction::triggered, this,
             [this, drive]() { open_floppy(drive); });
+    QAction* save = drive_menu->addAction("Save Current Image &As...");
+    save->setObjectName(
+        QString("saveFloppy%1AsAction").arg(drive_letter));
+    save->setEnabled(false);
+    save_floppy_actions_[drive] = save;
+    connect(save, &QAction::triggered, this,
+            [this, drive]() { save_floppy_as(drive); });
+    recent_floppy_menus_[drive] = drive_menu->addMenu("Open &Recent");
+    recent_floppy_menus_[drive]->setObjectName(
+        QString("recentFloppy%1Menu").arg(drive_letter));
     drive_menu->addSeparator();
 
     QAction* system_floppy =
@@ -402,15 +715,11 @@ void MainWindow::create_menus() {
     connect(blank_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_blank_floppy(drive); });
 
-    auto* status = new QLabel(this);
-    status->setObjectName(QString("floppyDrive%1Status").arg(drive_letter));
-    status->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
-    status->setMargin(4);
-    status->setMinimumWidth(110);
-    status->setMaximumWidth(240);
-    status->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    statusBar()->addPermanentWidget(status, 1);
-    media_status_labels_[drive] = status;
+    add_drive_card(QString("FLOPPY %1").arg(drive_letter),
+                   QString("floppyDrive%1Status").arg(drive_letter),
+                   ":/icons/floppy-disk.svg",
+                   &media_status_labels_[drive],
+                   &floppy_activity_leds_[drive]);
   }
 
   media_menu->addSeparator();
@@ -437,6 +746,15 @@ void MainWindow::create_menus() {
     open->setObjectName(QString("openHardDisk%1Action").arg(drive + 1));
     connect(open, &QAction::triggered, this,
             [this, drive]() { open_hard_disk(drive); });
+    QAction* save = drive_menu->addAction("Save Current Image &As...");
+    save->setObjectName(QString("saveHardDisk%1AsAction").arg(drive + 1));
+    save->setEnabled(false);
+    save_hard_disk_actions_[drive] = save;
+    connect(save, &QAction::triggered, this,
+            [this, drive]() { save_hard_disk_as(drive); });
+    recent_hard_disk_menus_[drive] = drive_menu->addMenu("Open &Recent");
+    recent_hard_disk_menus_[drive]->setObjectName(
+        QString("recentHardDisk%1Menu").arg(drive + 1));
     QAction* bundled = drive_menu->addAction("Use &Default Blank HDA");
     bundled->setObjectName(
         QString("mountDefaultHardDisk%1Action").arg(drive + 1));
@@ -445,15 +763,11 @@ void MainWindow::create_menus() {
     connect(bundled, &QAction::triggered, this,
             [this, drive]() { mount_bundled_hard_disk(drive); });
 
-    auto* status = new QLabel(this);
-    status->setObjectName(QString("hardDisk%1Status").arg(drive + 1));
-    status->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
-    status->setMargin(4);
-    status->setMinimumWidth(90);
-    status->setMaximumWidth(210);
-    status->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    statusBar()->addPermanentWidget(status, 1);
-    hard_disk_status_labels_[drive] = status;
+    add_drive_card(drive == 0 ? "HARD DISK C/D" : "HARD DISK E/F",
+                   QString("hardDisk%1Status").arg(drive + 1),
+                   ":/icons/hard-drive.svg",
+                   &hard_disk_status_labels_[drive],
+                   &hard_disk_activity_leds_[drive]);
   }
 
   QMenu* view_menu = menuBar()->addMenu("&View");
@@ -489,6 +803,36 @@ void MainWindow::create_menus() {
   QAction* screen_color = settings_menu->addAction("Screen &Appearance...");
   connect(screen_color, &QAction::triggered, this,
           &MainWindow::open_screen_color_settings);
+  QAction* sound = settings_menu->addAction("Enable Hardware &Sounds");
+  sound->setObjectName("enableHardwareSoundsAction");
+  sound->setCheckable(true);
+  sound->setChecked(QSettings().value("audio/enabled", true).toBool());
+  connect(sound, &QAction::toggled, this, [this](bool enabled) {
+    audio_enabled_ = enabled;
+    if (!enabled && hardware_audio_ != nullptr) {
+      hardware_audio_->stop_all();
+    }
+    QSettings().setValue("audio/enabled", enabled);
+  });
+  QAction* volume = settings_menu->addAction("Hardware Sound &Volume...");
+  volume->setObjectName("hardwareSoundVolumeAction");
+  connect(volume, &QAction::triggered, this,
+          &MainWindow::open_audio_volume_settings);
+  QAction* delays = settings_menu->addAction("Enable Hardware &Delays");
+  delays->setObjectName("enableHardwareDelaysAction");
+  delays->setCheckable(true);
+  delays->setChecked(
+      QSettings().value("machine/storageDelays", true).toBool());
+  machine_.set_storage_delays_enabled(delays->isChecked());
+  connect(delays, &QAction::toggled, this, [this](bool enabled) {
+    machine_.set_storage_delays_enabled(enabled);
+    QSettings().setValue("machine/storageDelays", enabled);
+  });
+
+  QMenu* help_menu = menuBar()->addMenu("&Help");
+  QAction* about = help_menu->addAction("&About P2000C Emulator...");
+  about->setObjectName("aboutAction");
+  connect(about, &QAction::triggered, this, &MainWindow::open_about);
   const QColor saved_color =
       QSettings()
           .value("display/baseColor", DisplayWidget::default_base_color())
@@ -497,6 +841,7 @@ void MainWindow::create_menus() {
                                ? saved_color
                                : DisplayWidget::default_base_color());
   display_->set_crt_effects(load_crt_effects(QSettings()));
+  refresh_recent_image_menus();
 }
 
 void MainWindow::refresh_screen() {
@@ -566,6 +911,63 @@ void MainWindow::open_hard_disk(std::size_t drive) {
   }
 }
 
+void MainWindow::save_floppy_as(std::size_t drive) {
+  const std::optional<RawDiskImage>& image =
+      drive == 0 ? machine_.floppy_a() : machine_.floppy_b();
+  if (!image.has_value()) {
+    return;
+  }
+  QString path = QFileDialog::getSaveFileName(
+      this, QString("Save floppy %1 as").arg(drive == 0 ? 'A' : 'B'),
+      QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+          .filePath(QFileInfo(qstring_path(image->path())).fileName()),
+      "Raw P2000C floppy images (*.flp)");
+  if (path.isEmpty()) {
+    return;
+  }
+  if (QFileInfo(path).suffix().isEmpty()) {
+    path += ".flp";
+  }
+  QString error;
+  if (!copy_image_file(qstring_path(image->path()), path, &error)) {
+    QMessageBox::critical(this, "Cannot Save Floppy", error);
+    return;
+  }
+  if (mount_floppy(filesystem_path(path), drive)) {
+    statusBar()->showMessage("Persistent floppy image saved and mounted: " +
+                                 path,
+                             5000);
+  }
+}
+
+void MainWindow::save_hard_disk_as(std::size_t drive) {
+  const std::optional<RawDiskImage>& image = machine_.hard_disk(drive);
+  if (!image.has_value()) {
+    return;
+  }
+  QString path = QFileDialog::getSaveFileName(
+      this, QString("Save hard disk %1 as").arg(drive + 1),
+      QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+          .filePath(QFileInfo(qstring_path(image->path())).fileName()),
+      "Raw P2000C hard-disk images (*.hda)");
+  if (path.isEmpty()) {
+    return;
+  }
+  if (QFileInfo(path).suffix().isEmpty()) {
+    path += ".hda";
+  }
+  QString error;
+  if (!copy_image_file(qstring_path(image->path()), path, &error)) {
+    QMessageBox::critical(this, "Cannot Save Hard Disk", error);
+    return;
+  }
+  if (mount_hard_disk(filesystem_path(path), drive)) {
+    statusBar()->showMessage("Persistent hard-disk image saved and mounted: " +
+                                 path,
+                             5000);
+  }
+}
+
 void MainWindow::refresh_media_indicators() {
   for (std::size_t drive = 0; drive < 2; ++drive) {
     const QChar drive_letter = drive == 0 ? 'A' : 'B';
@@ -592,9 +994,15 @@ void MainWindow::refresh_media_indicators() {
 
     const QString filename = compact_filename(image->path());
     const QString full_path = qstring_path(image->path());
-    const QString tooltip = QString("Drive %1 — writable raw FLP image\n%2")
-                                .arg(drive_letter)
-                                .arg(full_path);
+    const bool temporary =
+        !temporary_floppy_paths_[drive].isEmpty() &&
+        QFileInfo(full_path).absoluteFilePath() ==
+            QFileInfo(temporary_floppy_paths_[drive]).absoluteFilePath();
+    const QString tooltip =
+        QString("Drive %1 — %2 raw FLP image\n%3")
+            .arg(drive_letter)
+            .arg(temporary ? "temporary writable copy" : "persistent writable")
+            .arg(full_path);
     media_drive_menus_[drive]->setTitle(
         QString("Drive &%1 — %2").arg(drive_letter).arg(menu_safe(filename)));
     current_media_actions_[drive]->setText("Mounted: " + menu_safe(filename));
@@ -602,16 +1010,14 @@ void MainWindow::refresh_media_indicators() {
     current_media_actions_[drive]->setToolTip(tooltip);
     current_media_actions_[drive]->setStatusTip(full_path);
     media_status_labels_[drive]->setText(
-        QString("Drive %1: %2").arg(drive_letter).arg(filename));
+        QString("%1%2").arg(filename).arg(temporary ? "\nTEMPORARY" : ""));
     media_status_labels_[drive]->setToolTip(tooltip);
 
-    const QString suffix = drive == 0 ? "a" : "b";
     const QString& system_path = bundled_system_paths_[drive];
     const QString& zork_path = bundled_zork_paths_[drive];
     const QString& chess_path = bundled_chess_paths_[drive];
     const QString& ipldump_path = bundled_ipldump_paths_[drive];
-    const QString blank_path =
-        bundled_media_path("blank_drive_" + suffix + ".flp");
+    const QString& blank_path = bundled_blank_paths_[drive];
     bundled_system_actions_[drive]->setChecked(
         !system_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(system_path).absoluteFilePath());
@@ -648,9 +1054,14 @@ void MainWindow::refresh_media_indicators() {
 
     const QString filename = compact_filename(image->path());
     const QString full_path = qstring_path(image->path());
+    const bool temporary =
+        !temporary_hard_disk_paths_[drive].isEmpty() &&
+        QFileInfo(full_path).absoluteFilePath() ==
+            QFileInfo(temporary_hard_disk_paths_[drive]).absoluteFilePath();
     const QString tooltip =
-        QString("CP/M volumes %1 — writable 10 MiB raw HDA image\n%2")
+        QString("CP/M volumes %1 — %2 10 MiB raw HDA image\n%3")
             .arg(volumes)
+            .arg(temporary ? "temporary writable copy" : "persistent writable")
             .arg(full_path);
     hard_disk_menus_[drive]->setTitle(
         QString("Hard disk &%1 (%2) — %3")
@@ -662,21 +1073,21 @@ void MainWindow::refresh_media_indicators() {
     current_hard_disk_actions_[drive]->setChecked(true);
     current_hard_disk_actions_[drive]->setToolTip(tooltip);
     current_hard_disk_actions_[drive]->setStatusTip(full_path);
-    hard_disk_status_labels_[drive]->setText(volumes + ": " + filename);
+    hard_disk_status_labels_[drive]->setText(
+        filename + (temporary ? "\nTEMPORARY" : ""));
     hard_disk_status_labels_[drive]->setToolTip(tooltip);
-    const QString bundled_path =
-        bundled_media_path(QString("hard_disk_%1.hda").arg(drive + 1));
     bundled_hard_disk_actions_[drive]->setChecked(
-        QFileInfo(full_path).absoluteFilePath() ==
-        QFileInfo(bundled_path).absoluteFilePath());
+        temporary && QFileInfo(full_path).absoluteFilePath() ==
+                         QFileInfo(temporary_hard_disk_paths_[drive])
+                             .absoluteFilePath());
   }
 }
 
 void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_versioned_resource_copy(
-      ":/images/system.flp",
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/system.flp", media_session_.path(),
       QString("system_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare bundled floppy", error);
@@ -684,6 +1095,7 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
     bundled_system_paths_[drive] = *path;
     refresh_media_indicators();
     if (drive == 0) {
@@ -694,8 +1106,8 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
     }
     statusBar()->showMessage(
         QString(
-            "Bundled CP/M 2.2 system floppy mounted in drive %1 from writable "
-            "working copy.")
+            "Pristine CP/M 2.2 template mounted in drive %1 as a temporary "
+            "writable copy.")
             .arg(drive_letter));
   }
 }
@@ -703,8 +1115,8 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
 void MainWindow::mount_bundled_zork_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_versioned_resource_copy(
-      ":/images/zork.flp",
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/zork.flp", media_session_.path(),
       QString("zork_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare ZORK floppy", error);
@@ -712,6 +1124,7 @@ void MainWindow::mount_bundled_zork_floppy(std::size_t drive) {
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
     bundled_zork_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
@@ -722,8 +1135,8 @@ void MainWindow::mount_bundled_zork_floppy(std::size_t drive) {
 void MainWindow::mount_bundled_chess_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_versioned_resource_copy(
-      ":/images/chess.flp",
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/chess.flp", media_session_.path(),
       QString("chess_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare CHESS floppy", error);
@@ -731,6 +1144,7 @@ void MainWindow::mount_bundled_chess_floppy(std::size_t drive) {
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
     bundled_chess_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
@@ -741,8 +1155,8 @@ void MainWindow::mount_bundled_chess_floppy(std::size_t drive) {
 void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_versioned_resource_copy(
-      ":/images/ipldump.flp",
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/ipldump.flp", media_session_.path(),
       QString("ipldump_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare IPL dump floppy", error);
@@ -750,6 +1164,7 @@ void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
     bundled_ipldump_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
@@ -761,7 +1176,8 @@ void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
 void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = writable_blank_floppy(
+  const std::optional<QString> path = temporary_blank_floppy(
+      media_session_.path(),
       QString("blank_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare blank floppy", error);
@@ -769,24 +1185,33 @@ void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_blank_paths_[drive] = *path;
+    refresh_media_indicators();
     statusBar()->showMessage(
-        QString("Blank 640 KiB floppy mounted in drive %1 from persistent "
-                "working copy.")
+        QString("Blank 640 KiB template mounted in drive %1 as a temporary "
+                "writable copy.")
             .arg(drive_letter));
   }
 }
 
 void MainWindow::mount_bundled_hard_disk(std::size_t drive) {
   QString error;
-  const std::optional<QString> path = writable_resource_copy(
-      ":/images/blank.hda", QString("hard_disk_%1.hda").arg(drive + 1),
-      &error);
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/blank.hda", media_session_.path(),
+      QString("hard_disk_%1.hda").arg(drive + 1), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare default hard disk", error);
     refresh_media_indicators();
     return;
   }
-  mount_hard_disk(filesystem_path(*path), drive);
+  if (mount_hard_disk(filesystem_path(*path), drive)) {
+    temporary_hard_disk_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("Pristine blank hard-disk template %1 mounted temporarily.")
+            .arg(drive + 1));
+  }
 }
 
 void MainWindow::mount_default_media() {
@@ -826,6 +1251,148 @@ void MainWindow::open_screen_color_settings() {
     display_->set_base_color(original_color);
     display_->set_crt_effects(original_effects);
   }
+  display_->setFocus();
+}
+
+void MainWindow::open_audio_volume_settings() {
+  const int original_volume =
+      std::clamp(qRound(hardware_audio_->volume() * 100.0), 0, 100);
+  QDialog dialog(this);
+  dialog.setObjectName("hardwareSoundVolumeDialog");
+  dialog.setWindowTitle("Hardware Sound Volume");
+  dialog.setModal(true);
+  dialog.setMinimumWidth(360);
+
+  auto* layout = new QVBoxLayout(&dialog);
+  layout->addWidget(new QLabel(
+      "Master volume for the P2000C beeper and floppy drives.",
+      &dialog));
+  auto* value_label = new QLabel(&dialog);
+  value_label->setObjectName("hardwareSoundVolumeLabel");
+  auto* slider = new QSlider(Qt::Horizontal, &dialog);
+  slider->setObjectName("hardwareSoundVolumeSlider");
+  slider->setRange(0, 100);
+  slider->setSingleStep(1);
+  slider->setPageStep(10);
+  slider->setValue(original_volume);
+  slider->setAccessibleName("Hardware sound master volume");
+  layout->addWidget(value_label);
+  layout->addWidget(slider);
+
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
+                                            QDialogButtonBox::Cancel,
+                                        &dialog);
+  buttons->setObjectName("hardwareSoundVolumeButtons");
+  auto* test = buttons->addButton("Test Beep", QDialogButtonBox::ActionRole);
+  test->setEnabled(audio_enabled_);
+  connect(test, &QPushButton::clicked, &dialog,
+          [this]() { hardware_audio_->play_bell(); });
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(slider, &QSlider::valueChanged, &dialog,
+          [this, value_label](int value) {
+            value_label->setText(QString("Volume: %1%").arg(value));
+            hardware_audio_->set_volume(value / 100.0);
+          });
+  value_label->setText(QString("Volume: %1%").arg(original_volume));
+  layout->addWidget(buttons);
+
+  if (dialog.exec() == QDialog::Accepted) {
+    QSettings().setValue("audio/volume", slider->value());
+    statusBar()->showMessage(
+        QString("Hardware sound volume set to %1%.").arg(slider->value()),
+        3000);
+  } else {
+    hardware_audio_->set_volume(original_volume / 100.0);
+  }
+  display_->setFocus();
+}
+
+void MainWindow::open_about() {
+  QDialog dialog(this);
+  dialog.setObjectName("aboutDialog");
+  dialog.setWindowTitle("About P2000C Emulator");
+  dialog.resize(690, 650);
+  auto* layout = new QVBoxLayout(&dialog);
+
+  auto* logo = new QLabel(&dialog);
+  logo->setObjectName("aboutLogo");
+  logo->setAlignment(Qt::AlignCenter);
+  logo->setAccessibleName("Philips P2000C computer illustration");
+  logo->setPixmap(QIcon(":/logo/logo-p2000c.svg")
+                      .pixmap(QSize(400, 169), 1.0));
+  layout->addWidget(logo);
+
+  auto* tabs = new QTabWidget(&dialog);
+  tabs->setObjectName("aboutTabs");
+  auto* overview = new QTextBrowser(tabs);
+  overview->setObjectName("aboutOverview");
+  overview->setOpenExternalLinks(true);
+  overview->setHtml(
+      QString(
+          "<h2>P2000C Emulator %1</h2>"
+          "<p>An independent, work-in-progress emulator for the Philips "
+          "P2000C portable computer. It is not affiliated with or endorsed "
+          "by Philips or any owner of the bundled historical software.</p>"
+          "<p><b>Emulator source license:</b> GNU General Public License "
+          "version 3 only (GPL-3.0-only), without warranty.</p>"
+          "<p><b>Runtime:</b> Qt %2. Peripheral models are functional and "
+          "timing-aware, but are not transistor- or bus-cycle-exact.</p>"
+          "<p>The GPL declaration covers original emulator source. Historical "
+          "manuals, firmware, character data, disk images, and programs inside "
+          "those images retain separate rights; see <i>Third-party and asset "
+          "notices</i> for the full disclosure.</p>")
+          .arg(P2000C_VERSION, qVersion()));
+  tabs->addTab(overview, "About");
+
+  auto* notices = new QTextBrowser(tabs);
+  notices->setObjectName("aboutThirdPartyNotices");
+  notices->setOpenExternalLinks(true);
+  QFile notices_file(":/THIRD_PARTY.md");
+  if (notices_file.open(QIODevice::ReadOnly)) {
+    notices->setMarkdown(QString::fromUtf8(notices_file.readAll()));
+  }
+  tabs->addTab(notices, "Third-party and asset notices");
+
+  auto* third_party_licenses = new QTextBrowser(tabs);
+  third_party_licenses->setObjectName("aboutThirdPartyLicenses");
+  QString license_notices;
+  const std::array<std::pair<QString, QString>, 3> third_party_files = {{
+      {"superzazu/z80 — MIT", ":/third_party/superzazu_z80/LICENSE"},
+      {"MAME floppy samples — BSD-3-Clause",
+       ":/audio/LICENSE-MAME-SAMPLES.txt"},
+      {"Font Awesome icons — CC BY 4.0 notice",
+       ":/icons/LICENSE-FONT-AWESOME.txt"},
+  }};
+  for (const auto& [heading, path] : third_party_files) {
+    QFile file(path);
+    license_notices += "====================\n" + heading +
+                       "\n====================\n\n";
+    if (file.open(QIODevice::ReadOnly)) {
+      license_notices += QString::fromUtf8(file.readAll());
+    } else {
+      license_notices += "License notice unavailable.";
+    }
+    license_notices += "\n\n";
+  }
+  third_party_licenses->setPlainText(license_notices);
+  tabs->addTab(third_party_licenses, "Third-party licenses");
+
+  auto* license = new QTextBrowser(tabs);
+  license->setObjectName("aboutLicenseText");
+  QFile license_file(":/LICENSE");
+  if (license_file.open(QIODevice::ReadOnly)) {
+    license->setPlainText(QString::fromUtf8(license_file.readAll()));
+  }
+  tabs->addTab(license, "GPL-3.0 license");
+  layout->addWidget(tabs);
+
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+  buttons->setObjectName("aboutButtons");
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  layout->addWidget(buttons);
+  dialog.exec();
   display_->setFocus();
 }
 
@@ -872,6 +1439,13 @@ void MainWindow::run_emulation_slice() {
   const auto t_states = static_cast<std::uint64_t>(pending_t_states_);
   pending_t_states_ -= static_cast<double>(t_states);
   machine_.run_for(t_states);
+  const std::uint64_t bell_revision = machine_.terminal().bell_revision();
+  if (bell_revision != terminal_bell_revision_) {
+    terminal_bell_revision_ = bell_revision;
+    if (audio_enabled_) {
+      hardware_audio_->play_bell();
+    }
+  }
   if (terminal_revision_ != machine_.terminal().revision()) {
     terminal_revision_ = machine_.terminal().revision();
     display_->set_screen(machine_.terminal().screen(),

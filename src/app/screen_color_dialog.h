@@ -10,6 +10,7 @@
 #include "app/display_widget.h"
 
 class QCheckBox;
+class QDial;
 class QLabel;
 class QSlider;
 
@@ -70,6 +71,9 @@ class ScreenColorDialog : public QDialog {
     QCheckBox* curvature_ = nullptr;
     QCheckBox* vignette_ = nullptr;
     QCheckBox* noise_ = nullptr;
+    QCheckBox* flicker_ = nullptr;
+    QDial* crt_brightness_ = nullptr;
+    QLabel* crt_brightness_label_ = nullptr;
     QSlider* persistence_half_life_ = nullptr;
     QLabel* persistence_half_life_label_ = nullptr;
     QColor selected_color_;

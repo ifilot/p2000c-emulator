@@ -5,6 +5,7 @@
 #include <QMainWindow>
 #include <QSize>
 #include <QString>
+#include <QTemporaryDir>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -15,10 +16,13 @@ class QAction;
 class QLabel;
 class QMenu;
 class QTimer;
+class QVBoxLayout;
 
 namespace p2000c {
 
 class DisplayWidget;
+class DriveLed;
+class HardwareAudio;
 
 /** Main window for the minimal Qt P2000C emulator shell. */
 class MainWindow : public QMainWindow {
@@ -29,6 +33,7 @@ class MainWindow : public QMainWindow {
   public:
     /** Creates the emulator window, menus, display, and paced run timer. */
     explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
 
     /** Mounts a floppy image in drive A or B and refreshes machine status. */
     bool mount_floppy(const std::filesystem::path& path, std::size_t drive = 0);
@@ -52,25 +57,38 @@ class MainWindow : public QMainWindow {
     /** Prompts for and mounts a writable raw HDA image. */
     void open_hard_disk(std::size_t drive);
 
+    /** Saves the currently mounted floppy and switches to that persistent file. */
+    void save_floppy_as(std::size_t drive);
+
+    /** Saves the currently mounted hard disk and switches to that persistent file. */
+    void save_hard_disk_as(std::size_t drive);
+
+    /** Records an external image and rebuilds its drive's five recent entries. */
+    void remember_recent_image(const QString& path, bool hard_disk,
+                               std::size_t drive);
+
+    /** Rebuilds all per-drive recent-image submenus from persistent settings. */
+    void refresh_recent_image_menus();
+
     /** Refreshes the Media menu and persistent drive-status indicators. */
     void refresh_media_indicators();
 
-    /** Mounts a persistent writable copy of the bundled CP/M system floppy. */
+    /** Mounts a disposable copy of the pristine CP/M system template. */
     void mount_bundled_system_floppy(std::size_t drive);
 
-    /** Mounts a persistent writable copy of the bundled ZORK floppy. */
+    /** Mounts a disposable copy of the pristine ZORK template. */
     void mount_bundled_zork_floppy(std::size_t drive);
 
-    /** Mounts a persistent writable copy of the bundled CHESS floppy. */
+    /** Mounts a disposable copy of the pristine CHESS template. */
     void mount_bundled_chess_floppy(std::size_t drive);
 
     /** Mounts the bundled ASM/LOAD/IPLDUMP development floppy. */
     void mount_bundled_ipldump_floppy(std::size_t drive);
 
-    /** Mounts a persistent blank 640 KiB data floppy. */
+    /** Mounts a disposable blank 640 KiB data floppy. */
     void mount_bundled_blank_floppy(std::size_t drive);
 
-    /** Mounts one persistent writable copy of the bundled blank HDA. */
+    /** Mounts a disposable copy of the bundled blank HDA template. */
     void mount_bundled_hard_disk(std::size_t drive);
 
     /** Installs the documented A/B plus C-F startup media arrangement. */
@@ -81,6 +99,12 @@ class MainWindow : public QMainWindow {
 
     /** Opens the persistent phosphor color settings panel. */
     void open_screen_color_settings();
+
+    /** Opens the persistent master hardware-audio volume control. */
+    void open_audio_volume_settings();
+
+    /** Shows package, license, dependency, and historical-asset notices. */
+    void open_about();
 
     /** Saves the complete rendered CRT display to a PNG image. */
     void save_screenshot();
@@ -101,19 +125,33 @@ class MainWindow : public QMainWindow {
     std::array<QAction*, 2> bundled_chess_actions_{};
     std::array<QAction*, 2> bundled_ipldump_actions_{};
     std::array<QAction*, 2> bundled_blank_actions_{};
+    std::array<QAction*, 2> save_floppy_actions_{};
+    std::array<QMenu*, 2> recent_floppy_menus_{};
     std::array<QString, 2> bundled_system_paths_{};
     std::array<QString, 2> bundled_zork_paths_{};
     std::array<QString, 2> bundled_chess_paths_{};
     std::array<QString, 2> bundled_ipldump_paths_{};
+    std::array<QString, 2> bundled_blank_paths_{};
     std::array<QLabel*, 2> media_status_labels_{};
+    std::array<DriveLed*, 2> floppy_activity_leds_{};
     std::array<QMenu*, 2> hard_disk_menus_{};
     std::array<QAction*, 2> current_hard_disk_actions_{};
     std::array<QAction*, 2> bundled_hard_disk_actions_{};
+    std::array<QAction*, 2> save_hard_disk_actions_{};
+    std::array<QMenu*, 2> recent_hard_disk_menus_{};
     std::array<QLabel*, 2> hard_disk_status_labels_{};
+    std::array<DriveLed*, 2> hard_disk_activity_leds_{};
+    std::array<QString, 2> temporary_floppy_paths_{};
+    std::array<QString, 2> temporary_hard_disk_paths_{};
+    QVBoxLayout* drive_panel_layout_ = nullptr;
+    QTemporaryDir media_session_;
+    std::unique_ptr<HardwareAudio> hardware_audio_;
+    bool audio_enabled_ = true;
     QElapsedTimer execution_timer_;
     double pending_t_states_ = 0.0;
     double speed_multiplier_ = 1.0;
     std::uint64_t terminal_revision_ = 0;
+    std::uint64_t terminal_bell_revision_ = 0;
 };
 
 }  // namespace p2000c

@@ -4,6 +4,7 @@
 #include <QLinearGradient>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QRadialGradient>
 #include <QSizePolicy>
 #include <QTimer>
@@ -12,6 +13,9 @@
 
 namespace p2000c {
 namespace {
+
+/** Unaddressable glass margin visible around the P2000C's active raster. */
+constexpr qreal kCrtOverscanFraction = 0.035;
 
 /** Derives a display-palette color while retaining the selected phosphor hue.
  */
@@ -84,7 +88,7 @@ DisplayWidget::DisplayWidget(QWidget* parent)
   effect_timer_ = new QTimer(this);
   effect_timer_->setTimerType(Qt::PreciseTimer);
   connect(effect_timer_, &QTimer::timeout, this, [this]() {
-    ++noise_phase_;
+    ++temporal_phase_;
     update();
   });
   update_effect_timer();
@@ -109,6 +113,9 @@ void DisplayWidget::set_crt_effects(const CrtEffects& effects) {
       normalized.persistence_half_life_ms,
       CrtEffects::kMinimumPersistenceHalfLifeMs,
       CrtEffects::kMaximumPersistenceHalfLifeMs);
+  normalized.brightness_percent = std::clamp(
+      normalized.brightness_percent, CrtEffects::kMinimumBrightnessPercent,
+      CrtEffects::kMaximumBrightnessPercent);
   if (crt_effects_ == normalized) {
     return;
   }
@@ -327,8 +334,9 @@ void DisplayWidget::update_effect_timer() {
   if (effect_timer_ == nullptr) {
     return;
   }
-  if (crt_effects_.persistence || crt_effects_.noise) {
-    effect_timer_->start(33);
+  if (crt_effects_.persistence || crt_effects_.noise ||
+      crt_effects_.flicker) {
+    effect_timer_->start(16);
   } else {
     effect_timer_->stop();
   }
@@ -490,21 +498,37 @@ const QImage& DisplayWidget::update_persistence(
       std::pow(0.5, elapsed /
                         static_cast<qreal>(
                             crt_effects_.persistence_half_life_ms));
-  QPainter persistence_painter(&persistence_layer_);
-  persistence_painter.setCompositionMode(
-      QPainter::CompositionMode_DestinationIn);
-  persistence_painter.fillRect(
-      persistence_layer_.rect(),
-      QColor(255, 255, 255, std::clamp(qRound(retained * 255.0), 0, 255)));
-  persistence_painter.setCompositionMode(QPainter::CompositionMode_Lighten);
-  persistence_painter.drawImage(0, 0, current_emission);
+  // Decay the retained premultiplied channels, then take an exact component
+  // maximum with current emission. Unlike a generic painter blend mode, this
+  // makes a stationary image bit-for-bit stable and only changes afterglow
+  // where the electron beam has actually moved or switched off.
+  for (int y = 0; y < persistence_layer_.height(); ++y) {
+    auto* retained_pixels = reinterpret_cast<QRgb*>(
+        persistence_layer_.scanLine(y));
+    const auto* current_pixels = reinterpret_cast<const QRgb*>(
+        current_emission.constScanLine(y));
+    for (int x = 0; x < persistence_layer_.width(); ++x) {
+      const QRgb previous = retained_pixels[x];
+      const QRgb current = current_pixels[x];
+      const int red = std::max(qRed(current), qRound(qRed(previous) * retained));
+      const int green =
+          std::max(qGreen(current), qRound(qGreen(previous) * retained));
+      const int blue =
+          std::max(qBlue(current), qRound(qBlue(previous) * retained));
+      const int alpha =
+          std::max(qAlpha(current), qRound(qAlpha(previous) * retained));
+      retained_pixels[x] = qRgba(red, green, blue, alpha);
+    }
+  }
   return persistence_layer_;
 }
 
 void DisplayWidget::paintEvent(QPaintEvent* event) {
   Q_UNUSED(event);
   QPainter painter(this);
-  painter.fillRect(rect(), phosphor_tone(base_color_, 0.9, 0.012));
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  const qreal brightness = crt_effects_.brightness_percent / 100.0;
+  painter.fillRect(rect(), palette().color(QPalette::Window));
 
   const qreal scale = std::min(static_cast<qreal>(width()) / kDisplayWidth,
                                static_cast<qreal>(height()) / kDisplayHeight);
@@ -512,14 +536,30 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
   const QRectF display((width() - display_size.width()) / 2.0,
                        (height() - display_size.height()) / 2.0,
                        display_size.width(), display_size.height());
+  const qreal corner_radius =
+      std::clamp(display.height() * 0.035, 6.0, 18.0);
+  QPainterPath glass_shape;
+  glass_shape.addRoundedRect(display, corner_radius, corner_radius);
+  const QRectF active_area = display.adjusted(
+      display.width() * kCrtOverscanFraction,
+      display.height() * kCrtOverscanFraction,
+      -display.width() * kCrtOverscanFraction,
+      -display.height() * kCrtOverscanFraction);
+  painter.save();
+  painter.setClipPath(glass_shape);
+  painter.fillRect(display,
+                   phosphor_tone(base_color_, 0.9, 0.012 * brightness));
 
   QRadialGradient screen_tone(
       display.center(), display.width() * 0.72,
       display.center() -
           QPointF(display.width() * 0.08, display.height() * 0.10));
-  screen_tone.setColorAt(0.0, phosphor_tone(base_color_, 0.95, 0.067));
-  screen_tone.setColorAt(0.72, phosphor_tone(base_color_, 1.0, 0.043));
-  screen_tone.setColorAt(1.0, phosphor_tone(base_color_, 1.0, 0.020));
+  screen_tone.setColorAt(
+      0.0, phosphor_tone(base_color_, 0.95, 0.067 * brightness));
+  screen_tone.setColorAt(
+      0.72, phosphor_tone(base_color_, 1.0, 0.043 * brightness));
+  screen_tone.setColorAt(
+      1.0, phosphor_tone(base_color_, 1.0, 0.020 * brightness));
   painter.fillRect(display, screen_tone);
 
   const bool graphics =
@@ -528,10 +568,11 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
                                     : kTextRasterWidth;
   const int raster_height = graphics ? Terminal::kGraphicHeight
                                      : kTextRasterHeight;
-  const QSizeF raster_size(display.width() * raster_width / kTextRasterWidth,
-                           display.height() * raster_height /
+  const QSizeF raster_size(active_area.width() * raster_width /
+                               kTextRasterWidth,
+                           active_area.height() * raster_height /
                                kTextRasterHeight);
-  const QRectF raster(display.center() -
+  const QRectF raster(active_area.center() -
                           QPointF(raster_size.width() / 2.0,
                                   raster_size.height() / 2.0),
                       raster_size);
@@ -545,12 +586,29 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
   const QImage& visible_emission =
       crt_effects_.persistence ? update_persistence(emission_cache_)
                                : emission_cache_;
-  painter.drawImage(0, 0, visible_emission);
+  qreal emission_intensity = brightness;
+  if (crt_effects_.flicker) {
+    constexpr qreal kTwoPi = 6.2831853071795864769;
+    const qreal phase = static_cast<qreal>(temporal_phase_ % 60) / 60.0;
+    emission_intensity *=
+        0.955 + 0.045 * std::sin(kTwoPi * phase * 10.0);
+  }
+  painter.save();
+  if (emission_intensity <= 1.0) {
+    painter.setOpacity(emission_intensity);
+    painter.drawImage(0, 0, visible_emission);
+  } else {
+    painter.drawImage(0, 0, visible_emission);
+    painter.setCompositionMode(QPainter::CompositionMode_Plus);
+    painter.setOpacity(std::min<qreal>(0.5, emission_intensity - 1.0));
+    painter.drawImage(0, 0, visible_emission);
+  }
+  painter.restore();
 
   painter.save();
   painter.setClipRect(display);
   if (crt_effects_.noise) {
-    std::uint32_t state = noise_phase_ * 747796405U + 2891336453U;
+    std::uint32_t state = temporal_phase_ * 747796405U + 2891336453U;
     const int points = std::max(1, qRound(display.width() * display.height() /
                                          1350.0));
     for (int index = 0; index < points; ++index) {
@@ -582,10 +640,11 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
   }
   painter.restore();
 
-  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.restore();
   painter.setPen(QPen(phosphor_tone(base_color_, 0.55, 0.23, 120), 1.0));
   painter.setBrush(Qt::NoBrush);
-  painter.drawRect(display.adjusted(0.5, 0.5, -0.5, -0.5));
+  painter.drawRoundedRect(display.adjusted(0.5, 0.5, -0.5, -0.5),
+                          corner_radius, corner_radius);
 }
 
 void DisplayWidget::keyPressEvent(QKeyEvent* event) {

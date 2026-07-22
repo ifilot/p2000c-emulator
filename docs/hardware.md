@@ -151,13 +151,18 @@ gap. Brighter attributes produce a slightly wider beam.
 The current emission image is cached separately from the glass/background.
 Optional after-effects apply a two-axis barrel warp, exponentially decaying
 phosphor persistence (60 ms default half-life, adjustable from 20 to 250 ms),
-edge shading and a faint glass highlight, or animated monochrome noise. Each
-effect can be previewed and persisted independently through **Settings > Screen
-Appearance...**. The complete rendered CRT can also be captured as a PNG via
+edge shading and a faint glass highlight, animated monochrome noise, or subtle
+whole-screen refresh flicker. Persistence uses an explicit per-pixel maximum
+with current emission, so a stationary trace remains bit-for-bit stable while
+only extinguished phosphor decays; it never introduces flicker itself. A
+separate 30–150% intensity dial models the physical monitor brightness control
+independently of the selected phosphor hue. Each effect can be previewed and
+persisted independently through **Settings > Screen Appearance...**. The
+complete rendered CRT can also be captured as a PNG via
 **View > Save Screenshot...**. The
 monitor service instructions specify a 15.67 kHz horizontal frequency, but the
 emulator does not simulate individual beam sweeps; temporal effects are updated
-at approximately 30 Hz and presented at the host compositor's refresh rate.
+at approximately 60 Hz and presented at the host compositor's refresh rate.
 
 Source: service manual sections 3.3/10-1 through 10-2 and Appendix A.
 
@@ -222,3 +227,43 @@ the normal 12-byte terminal status reply.
 Sources: service manual terminal-firmware sections 2.3.5 through 2.3.8 (pages
 4-14 through 4-20), terminal-board sections 3.3/5-3 through 5-4 and 3.3/8-2
 through 8-3; CP/M reference manual sections 10.2.5 through 10.3.
+
+## Storage mechanics and sound
+
+Bundled FLP and HDA resources are immutable templates. The application copies
+one into an automatically removed session directory every time it is selected;
+the controller writes only to that copy. Saving the mounted image creates and
+mounts an ordinary persistent image at the user's chosen path.
+
+The uPD765 model reports physical activity and delays DMA/FDC completion
+signals without stopping the Z80. The FD-55 timing model uses the service
+manual's 300 RPM spindle, 100 ms average latency, 5 ms head load, and
+BIOS-selected 6 ms step rate. SASI status and completion are similarly withheld
+during the modeled hard-disk interval. These events drive the side-panel LEDs;
+floppy events also drive the recorded mechanical audio. Timing can be disabled
+independently; controller operations then complete immediately while their
+activity events remain visible and available floppy sounds remain audible.
+
+Floppy audio uses MAME's BSD-licensed 5.25-inch loaded-disk recordings for
+spindle start, the 300 RPM running loop, spindle stop, a single head step, and a
+6 ms seek train. The seek train is cropped or repeated to the requested track
+distance. Because the source recordings retain between roughly 19 and 36 dB of
+peak headroom, they are independently normalized to −3 dBFS when loaded before
+the motor/head balance and user master level are applied. Read and write
+commands do not add broadband noise: on real drives the audible components are
+overwhelmingly the rotating medium and mechanical head positioning. This avoids
+the conspicuously synthetic hiss produced by the earlier procedural model. MAME
+currently supplies no corresponding hard-disk
+mechanics sample set, so SASI activity is intentionally silent instead of using
+an invented effect. A persisted master level controls floppy and beeper volume
+together. The manual exposes the spindle as a direct software-controlled
+`MOTON` line and specifies no hardware timeout. To prevent software that leaves
+this line asserted from producing an endless loop, the audible spindle coasts
+down 1.2 seconds after the last floppy operation; subsequent activity starts it
+again. An explicit motor-off signal still stops it immediately.
+
+BEL (07H) activates the terminal board's one-bit beeper. As documented in
+sections 3.3/8-3 and 3.3/9-3, OUT2 gates the decoded underline-row signal to
+produce approximately 1,300 Hz. The audio model synthesizes that square-wave
+source with a small analogue roll-off rather than substituting the host's
+generic alert sound.

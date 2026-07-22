@@ -18,16 +18,19 @@ block cursor.
 
 This is deliberately still a minimal prototype. The disk controllers cover the
 commands used by the bundled CP/M system, terminal control-code support is
-partial, and printer, communications, sound, and the terminal-board Z80 are not
-implemented yet.
+partial, and printer, communications, the programmable optional CTC sound
+connector, and the terminal-board Z80 are not implemented yet. The standard
+terminal BEL beeper and mechanical drive audio are implemented.
 
 ## Requirements
 
 - CMake 3.24 or newer
 - A C++20 compiler
 - Qt 6.4 or newer (`Core`, `Gui`, and `Widgets`)
+- OpenAL development files
 
-On Debian/Ubuntu, the Qt development package is commonly named `qt6-base-dev`.
+On Debian/Ubuntu, the required packages are commonly named `qt6-base-dev` and
+`libopenal-dev`.
 MSYS2 MinGW users can install the corresponding `mingw-w64-*-qt6-base` and
 `mingw-w64-*-cmake` packages.
 
@@ -57,23 +60,42 @@ Run the graphical shell with:
 ```
 
 The verified IPL dump and default media are embedded in the application. At
-startup, drive A receives a persistent writable copy of `images/system.flp`;
-drive B remains available for another 640 KiB FLP. Two persistent 10 MiB HDA
-working images back C/D and E/F, each pair representing the low and high 5 MiB
-CP/M volumes of one physical SASI disk.
+startup, drive A receives a disposable writable copy of `images/system.flp`;
+drive B remains available for another 640 KiB FLP. Two disposable 10 MiB HDA
+copies back C/D and E/F, each pair representing the low and high 5 MiB CP/M
+volumes of one physical SASI disk. Selecting a bundled image always recreates
+it from its pristine template.
 
 The drive A and B menus provide the bootable core system, non-bootable ZORK,
 CHESS, and IPL dump toolchain disks, a blank data floppy, and an action for
-opening external `.flp` images. The hard-disk menus expose physical disk 1
-(C/D) and disk 2 (E/F) and accept exact 10 MiB `.hda` images. Bundled masters
-remain unchanged; all emulated writes go directly to per-user working copies.
-Bundled floppy copies are kept in content-versioned directories, so an updated
-master is mounted without overwriting a writable copy made by an older emulator
-version.
+opening external `.flp` images. **Save Current Image As...** promotes the
+current temporary state to a persistent image and mounts it immediately. Each
+physical drive remembers its five most recent external or saved images. The
+hard-disk menus expose physical disk 1 (C/D) and disk 2 (E/F) and accept exact
+10 MiB `.hda` images. Bundled masters remain unchanged and session copies are
+automatically removed when the emulator closes.
 
 The Media menu shows each mounted filename directly in its submenu title.
-Matching bundled images are checked, and status-bar indicators cover A, B,
-C/D, and E/F; hover an indicator or mounted-image entry for the full path.
+Matching bundled images are checked. A drive panel beside the CRT covers A, B,
+C/D, and E/F, identifies temporary media, and uses fading coloured LEDs for
+motor, seek, read, and write activity. Borderless entries use attributed Font
+Awesome floppy and hard-drive icons; hover an entry for the full path.
+
+Storage timing follows the supplied hardware documentation: the 300 RPM TEAC
+FD-55 model includes head-load, average rotational-latency, sector-transfer,
+and 6 ms stepping delays, while SASI operations include early hard-disk access
+latency. **Settings > Enable Hardware Sounds** controls spindle, stepper, and
+the terminal's documented 1,300 Hz one-bit BEL beeper. The 5.25-inch spindle
+and head sounds use MAME's authentic recordings; magnetic read/write operations
+and SASI disks add no invented effects. The recordings are peak-normalized to
+−3 dBFS on load, then balanced so the continuous spindle remains quieter than
+head movement. The spindle sound coasts down after 1.2 seconds without floppy
+activity, even when system software leaves the motor-control bit asserted.
+**Settings > Hardware Sound Volume...** sets and remembers one
+master level for floppy and beeper audio. **Settings >
+Enable Hardware Delays** independently bypasses physical access latency while
+retaining activity lights and available sounds. OpenAL is required for audio
+output.
 
 The **View > Display Resolution** menu offers fixed, aspect-correct display
 sizes from 560x288 through 1680x864. The selected size is remembered between
@@ -84,17 +106,26 @@ PNG image.
 The **Settings > Screen Appearance...** panel provides a color wheel and
 brightness control for tuning the CRT phosphor color. It also independently
 controls scanline separation, phosphor bloom and persistence, tube curvature,
-glass/edge shading, and subtle analogue noise. The persistence half-life is
-adjustable from 20 to 250 ms and defaults to a relatively crisp 60 ms. Changes
-are previewed live, restored when canceled, and remembered between runs.
+glass/edge shading, subtle analogue noise, and refresh flicker. Persistence is
+a pixel-stable exponential afterglow; optional whole-screen flicker is a
+separate, clearly perceptible effect. A dedicated 30–150% CRT-brightness dial
+models the monitor's physical brightness wheel without changing phosphor hue.
+The persistence half-life is adjustable from 20 to 250 ms and defaults to a
+relatively crisp 60 ms. Changes are previewed live, restored when canceled, and
+remembered between runs.
+
+**Help > About P2000C Emulator...** reports the package version,
+GPL-3.0-only license, runtime Qt version, implementation limitations, vendored
+and runtime dependencies, and the separate or uncertain rights status of the
+historical manuals, firmware, disk images, and bundled programs.
 
 The **Machine > Emulation Speed** menu paces emulated time against a monotonic
 host clock. Authentic speed is four million Z80 T-states per second; selectable
 scales range from 1 MHz/25% through 16 MHz/400%. Scaling accelerates or slows
 the complete emulated machine, including its timer interrupt cadence.
 
-Emulated floppy and SASI writes are applied directly to the selected working
-image, so keep a backup of valuable external media.
+Emulated writes to external and explicitly saved images are applied directly,
+so keep a backup of valuable user media.
 
 Inspect a raw image without starting Qt:
 

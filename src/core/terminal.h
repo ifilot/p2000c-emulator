@@ -88,6 +88,9 @@ class Terminal {
     /** Returns a counter changed after every visible screen update. */
     std::uint64_t revision() const { return revision_; }
 
+    /** Returns a counter incremented whenever BEL activates the beeper. */
+    std::uint64_t bell_revision() const { return bell_revision_; }
+
     /** Returns the zero-based cursor column. */
     int cursor_column() const { return cursor_column_; }
 
@@ -167,6 +170,7 @@ class Terminal {
     bool keyboard_locked_ = false;
     bool cursor_visible_ = true;
     std::uint64_t revision_ = 0;
+    std::uint64_t bell_revision_ = 0;
 };
 
 }  // namespace p2000c

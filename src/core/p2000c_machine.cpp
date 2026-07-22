@@ -125,6 +125,7 @@ void P2000cMachine::reset() {
   terminal_.reset();
   dma_channels_.fill({});
   interrupt_queue_.clear();
+  timed_interrupts_.clear();
   fdc_command_.clear();
   fdc_result_.clear();
   dma_high_byte_ = false;
@@ -144,11 +145,14 @@ void P2000cMachine::reset() {
   sasi_command_.fill(0);
   sasi_command_length_ = 0;
   sasi_status_ = 0;
+  sasi_ready_cycle_ = 0;
   sio_b_register_ = 0;
   sio_b_receive_byte_ = 0;
   sio_b_receive_ready_ = false;
   total_cycles_ = 0;
   next_timer_cycle_ = kTimerPeriod;
+  storage_busy_until_ = 0;
+  fdc_ready_cycle_ = 0;
 }
 
 void P2000cMachine::run_for(std::uint64_t t_states) {
@@ -165,6 +169,19 @@ void P2000cMachine::run_for(std::uint64_t t_states) {
       break;
     }
     t_states -= instruction_cycles;
+  }
+}
+
+void P2000cMachine::begin_storage_activity(const StorageActivity& activity,
+                                           bool apply_latency) {
+  if (storage_activity_handler_) {
+    storage_activity_handler_(activity);
+  }
+  if (storage_delays_enabled_ && apply_latency && activity.duration_ms > 0) {
+    const std::uint64_t duration =
+        static_cast<std::uint64_t>(activity.duration_ms) * 4'000;
+    storage_busy_until_ =
+        std::max(storage_busy_until_, total_cycles_ + duration);
   }
 }
 
@@ -254,6 +271,7 @@ void P2000cMachine::cpu_port_out(z80* cpu, std::uint8_t port,
       break;
     case 0x1f: {
       const bool was_released = (machine->fdc_output_ & 0x10) != 0;
+      const bool motor_was_on = (machine->fdc_output_ & 0x20) != 0;
       machine->fdc_output_ = value;
       const bool is_released = (value & 0x10) != 0;
       if (!was_released && is_released) {
@@ -261,6 +279,16 @@ void P2000cMachine::cpu_port_out(z80* cpu, std::uint8_t port,
       }
       if (!is_released) {
         machine->fdc_reset_released_ = false;
+      }
+      if (!motor_was_on && (value & 0x20) != 0) {
+        machine->begin_storage_activity(
+            {StorageDevice::kFloppy, StorageOperation::kMotorStart, 0, 0,
+             400},
+            false);
+      } else if (motor_was_on && (value & 0x20) == 0) {
+        machine->begin_storage_activity(
+            {StorageDevice::kFloppy, StorageOperation::kMotorStop, 0, 0, 100},
+            false);
       }
       break;
     }
@@ -295,6 +323,17 @@ void P2000cMachine::update_devices() {
     request_interrupt(0xd8);
     next_timer_cycle_ += kTimerPeriod;
   }
+  while (!timed_interrupts_.empty() &&
+         timed_interrupts_.front().due_cycle <= total_cycles_) {
+    if (interrupt_queue_.size() < 32) {
+      interrupt_queue_.push_back(timed_interrupts_.front().vector);
+    }
+    timed_interrupts_.pop_front();
+  }
+  if (sasi_phase_ == SasiPhase::kExecuting &&
+      total_cycles_ >= sasi_ready_cycle_) {
+    sasi_phase_ = SasiPhase::kStatus;
+  }
   if (cpu_->iff1 && !cpu_->int_pending && !interrupt_queue_.empty()) {
     z80_gen_int(cpu_.get(), interrupt_queue_.front());
     interrupt_queue_.pop_front();
@@ -302,6 +341,11 @@ void P2000cMachine::update_devices() {
 }
 
 void P2000cMachine::request_interrupt(std::uint8_t vector) {
+  if ((vector == 0xd6 || vector == 0xde) &&
+      total_cycles_ < storage_busy_until_) {
+    timed_interrupts_.push_back({storage_busy_until_, vector});
+    return;
+  }
   if (interrupt_queue_.size() < 32) {
     interrupt_queue_.push_back(vector);
   }
@@ -396,6 +440,9 @@ std::uint8_t P2000cMachine::fdc_status() const {
   if (!fdc_reset_released_) {
     return 0;
   }
+  if (total_cycles_ < fdc_ready_cycle_) {
+    return 0x10;  // Controller busy; result phase begins after the access.
+  }
   return fdc_result_.empty() ? 0x80 : 0xc0;
 }
 
@@ -424,6 +471,9 @@ void P2000cMachine::complete_fdc_command() {
   if (command == 0x07 || command == 0x0f) {
     const std::uint8_t drive = fdc_command_[1] & 0x03;
     const RawDiskImage* image = floppy_drive(drive);
+    const int old_track =
+        drive < fdc_tracks_.size() ? fdc_tracks_[drive] : 0;
+    const int new_track = command == 0x0f ? fdc_command_[2] : 0;
     if (drive < fdc_tracks_.size()) {
       fdc_tracks_[drive] = command == 0x0f ? fdc_command_[2] : 0;
       fdc_sense_track_ = fdc_tracks_[drive];
@@ -434,6 +484,12 @@ void P2000cMachine::complete_fdc_command() {
     fdc_sense_status_ =
         static_cast<std::uint8_t>((drive_ready ? 0x20 : 0x48) | drive);
     fdc_sense_pending_ = true;
+    const int distance = std::abs(new_track - old_track);
+    begin_storage_activity(
+        {StorageDevice::kFloppy, StorageOperation::kSeek, drive, distance,
+         15 + std::max(1, distance) * 6},
+        drive_ready);
+    fdc_ready_cycle_ = storage_busy_until_;
     request_interrupt(0xde);
     return;
   }
@@ -446,6 +502,9 @@ void P2000cMachine::complete_fdc_command() {
     const std::uint8_t size_code = fdc_command_[5];
     const std::uint8_t last_sector = fdc_command_[6];
     const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
+    const int sectors = static_cast<int>(
+        (dma_length + RawDiskImage::kSectorSize - 1) /
+        RawDiskImage::kSectorSize);
     const std::uint8_t result_sector = static_cast<std::uint8_t>(
         std::min<std::size_t>(last_sector,
                               first_sector +
@@ -464,6 +523,11 @@ void P2000cMachine::complete_fdc_command() {
         track_data.insert(track_data.end(), sector.begin(), sector.end());
       }
     }
+    begin_storage_activity(
+        {StorageDevice::kFloppy, StorageOperation::kRead, drive, 0,
+         105 + sectors * 13},
+        image != nullptr);
+    fdc_ready_cycle_ = storage_busy_until_;
     media_ok = media_ok && run_floppy_dma(track_data);
     if (media_ok) {
       fdc_result_.insert(fdc_result_.end(),
@@ -486,6 +550,9 @@ void P2000cMachine::complete_fdc_command() {
     const std::uint8_t size_code = fdc_command_[5];
     const std::uint8_t last_sector = fdc_command_[6];
     const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
+    const int requested_sectors = static_cast<int>(
+        (dma_length + RawDiskImage::kSectorSize - 1) /
+        RawDiskImage::kSectorSize);
     const std::uint8_t result_sector = static_cast<std::uint8_t>(
         std::min<std::size_t>(last_sector,
                               first_sector +
@@ -496,6 +563,11 @@ void P2000cMachine::complete_fdc_command() {
         drive < floppy_drives_.size() && floppy_drives_[drive].has_value()
             ? &*floppy_drives_[drive]
             : nullptr;
+    begin_storage_activity(
+        {StorageDevice::kFloppy, StorageOperation::kWrite, drive, 0,
+         105 + requested_sectors * 13},
+        image != nullptr);
+    fdc_ready_cycle_ = storage_busy_until_;
     std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
     const std::size_t sectors = data.has_value()
                                     ? data->size() / RawDiskImage::kSectorSize
@@ -567,6 +639,8 @@ std::uint8_t P2000cMachine::read_sasi_control() const {
       return 0;
     case SasiPhase::kCommand:
       return 0x8b;  // REQ, C/D and BSY.
+    case SasiPhase::kExecuting:
+      return 0x80;  // BSY, with REQ withheld during mechanical access.
     case SasiPhase::kStatus:
       return 0x9b;  // REQ, C/D, BSY and I/O.
     case SasiPhase::kMessage:
@@ -628,9 +702,15 @@ void P2000cMachine::execute_sasi_command() {
   bool okay = disk != nullptr;
 
   if (okay && opcode == 0x08) {
+    begin_storage_activity(
+        {StorageDevice::kHardDisk, StorageOperation::kRead, unit, 0,
+         60 + static_cast<int>(block_count)});
     const std::span<const std::uint8_t> data = disk->blocks(lba, block_count);
     okay = !data.empty() && run_floppy_dma(data);
   } else if (okay && opcode == 0x0a) {
+    begin_storage_activity(
+        {StorageDevice::kHardDisk, StorageOperation::kWrite, unit, 0,
+         60 + static_cast<int>(block_count)});
     std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
     std::string error;
     okay = data.has_value() &&
@@ -641,7 +721,9 @@ void P2000cMachine::execute_sasi_command() {
   }
 
   sasi_status_ = okay ? 0 : 0x02;
-  sasi_phase_ = SasiPhase::kStatus;
+  sasi_ready_cycle_ = storage_busy_until_;
+  sasi_phase_ = total_cycles_ < sasi_ready_cycle_ ? SasiPhase::kExecuting
+                                                  : SasiPhase::kStatus;
   request_interrupt(0xde);
 }
 

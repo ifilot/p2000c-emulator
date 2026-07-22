@@ -23,6 +23,9 @@ struct CrtEffects {
     static constexpr int kMinimumPersistenceHalfLifeMs = 20;
     static constexpr int kMaximumPersistenceHalfLifeMs = 250;
     static constexpr int kDefaultPersistenceHalfLifeMs = 60;
+    static constexpr int kMinimumBrightnessPercent = 30;
+    static constexpr int kMaximumBrightnessPercent = 150;
+    static constexpr int kDefaultBrightnessPercent = 100;
 
     bool scanlines = true;
     bool bloom = true;
@@ -30,13 +33,17 @@ struct CrtEffects {
     bool curvature = true;
     bool vignette = true;
     bool noise = false;
+    bool flicker = false;
     int persistence_half_life_ms = kDefaultPersistenceHalfLifeMs;
+    int brightness_percent = kDefaultBrightnessPercent;
 
     bool operator==(const CrtEffects&) const = default;
 };
 
 /** Renders the P2000C terminal's character and mixed graphics modes. */
 class DisplayWidget : public QWidget {
+    Q_OBJECT
+
   private:
     static constexpr int kColumns = 80;
     static constexpr int kRows = 24;
@@ -163,7 +170,7 @@ class DisplayWidget : public QWidget {
     bool cursor_enabled_ = true;
     bool cursor_phase_ = true;
     bool attribute_blink_phase_ = true;
-    std::uint32_t noise_phase_ = 0;
+    std::uint32_t temporal_phase_ = 0;
     Terminal::GraphicsMode graphics_mode_ =
         Terminal::GraphicsMode::kCharacter;
     QColor base_color_ = default_base_color();

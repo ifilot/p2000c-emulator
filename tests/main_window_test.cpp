@@ -6,19 +6,24 @@
 #include <QColor>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDial>
 #include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
+#include <QFrame>
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
+#include <QPalette>
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QTabWidget>
+#include <QTextBrowser>
 #include <QTimer>
 #include <algorithm>
 #include <array>
@@ -29,6 +34,7 @@
 #include <string>
 
 #include "app/display_widget.h"
+#include "app/hardware_audio.h"
 #include "core/raw_disk_image.h"
 
 namespace {
@@ -67,25 +73,21 @@ bool validate_image(const QString& path, p2000c::RawDiskImage::Kind kind) {
   return true;
 }
 
-/** Finds the writable copy whose bytes match the current bundled master. */
-QString current_bundled_copy(const QString& media_directory,
-                             const QString& filename,
-                             const QString& resource) {
-  QFile master(resource);
-  if (!master.open(QIODevice::ReadOnly)) {
-    return {};
-  }
-  const QByteArray expected = master.readAll();
-  QDirIterator candidates(QDir(media_directory).filePath("bundled"),
-                          QStringList{filename}, QDir::Files,
-                          QDirIterator::Subdirectories);
-  while (candidates.hasNext()) {
-    QFile candidate(candidates.next());
-    if (candidate.open(QIODevice::ReadOnly) && candidate.readAll() == expected) {
-      return candidate.fileName();
-    }
-  }
-  return {};
+/** Mirrors the unaddressable CRT margin used by the presentation renderer. */
+QRectF active_crt_area(const QSize& size) {
+  constexpr qreal kOverscanFraction = 0.035;
+  const QRectF glass(QPointF(0.0, 0.0), QSizeF(size));
+  return glass.adjusted(glass.width() * kOverscanFraction,
+                        glass.height() * kOverscanFraction,
+                        -glass.width() * kOverscanFraction,
+                        -glass.height() * kOverscanFraction);
+}
+
+/** Maps a coordinate from the former edge-to-edge raster into active glass. */
+QPoint active_crt_point(const QImage& image, qreal x, qreal y) {
+  const QRectF active = active_crt_area(image.size());
+  return QPoint(qRound(active.left() + x / image.width() * active.width()),
+                qRound(active.top() + y / image.height() * active.height()));
 }
 
 /** Checks inverse cells and the four documented intensity levels in pixels. */
@@ -119,9 +121,12 @@ bool validate_attribute_rendering() {
   display.render(&image);
   auto cell_energy = [&](int column) {
     int energy = 0;
-    const int left = column * 7;
-    for (int y = 0; y < 12; ++y) {
-      for (int x = left; x < left + 7; ++x) {
+    const QRectF active = active_crt_area(image.size());
+    const QRectF cell(active.left() + column * active.width() / 80.0,
+                      active.top(), active.width() / 80.0,
+                      active.height() / 24.0);
+    for (int y = qCeil(cell.top()); y < qFloor(cell.bottom()); ++y) {
+      for (int x = qCeil(cell.left()); x < qFloor(cell.right()); ++x) {
         energy += qGreen(image.pixel(x, y));
       }
     }
@@ -177,8 +182,12 @@ bool validate_graphics_rendering() {
   p2000c::Terminal medium;
   send(&medium, {0x1b, '5', 0x1b, 'D', 0x00, 0x00});
   const QImage medium_image = render(medium);
-  const int medium_pixel_energy = area_energy(medium_image, 57, 269);
-  const int medium_blank_energy = area_energy(medium_image, 72, 269);
+  const QPoint medium_pixel = active_crt_point(medium_image, 57, 269);
+  const QPoint medium_blank = active_crt_point(medium_image, 72, 269);
+  const int medium_pixel_energy =
+      area_energy(medium_image, medium_pixel.x(), medium_pixel.y());
+  const int medium_blank_energy =
+      area_energy(medium_image, medium_blank.x(), medium_blank.y());
   if (medium.graphics_mode() !=
           p2000c::Terminal::GraphicsMode::kMedium256 ||
       medium_pixel_energy * 4 <= medium_blank_energy * 5) {
@@ -191,8 +200,12 @@ bool validate_graphics_rendering() {
   p2000c::Terminal high;
   send(&high, {0x1b, '3', 0x1b, 'D', 0xff, 0x01, 0xfb});
   const QImage high_image = render(high);
-  const int high_pixel_energy = area_energy(high_image, 503, 19);
-  const int high_blank_energy = area_energy(high_image, 488, 19);
+  const QPoint high_pixel = active_crt_point(high_image, 503, 19);
+  const QPoint high_blank = active_crt_point(high_image, 488, 19);
+  const int high_pixel_energy =
+      area_energy(high_image, high_pixel.x(), high_pixel.y());
+  const int high_blank_energy =
+      area_energy(high_image, high_blank.x(), high_blank.y());
   if (high.graphics_mode() != p2000c::Terminal::GraphicsMode::kHigh512 ||
       high_pixel_energy * 4 <= high_blank_energy * 5) {
     std::cerr << "High-resolution graphics were not rendered: "
@@ -239,12 +252,44 @@ bool validate_crt_effect_rendering() {
                                     false, false, false};
   p2000c::CrtEffects scanlines = plain;
   scanlines.scanlines = true;
-  const std::uint64_t plain_energy = image_energy(render(plain));
+  const QImage plain_image = render(plain);
+  const std::uint64_t plain_energy = image_energy(plain_image);
   const QImage scanline_image = render(scanlines);
   const std::uint64_t scanline_energy = image_energy(scanline_image);
+  if (scanline_image.pixelColor(0, 0) ==
+      scanline_image.pixelColor(scanline_image.width() / 2, 0)) {
+    std::cerr << "CRT presentation did not retain its rounded corners.\n";
+    return false;
+  }
+  const QColor overscan = plain_image.pixelColor(
+      plain_image.width() / 100, plain_image.height() / 2);
+  constexpr std::array<QPointF, 4> kSafeRasterCorners = {
+      QPointF(0.05, 0.05), QPointF(0.95, 0.05),
+      QPointF(0.05, 0.95), QPointF(0.95, 0.95)};
+  for (const QPointF& corner : kSafeRasterCorners) {
+    const QColor active = plain_image.pixelColor(
+        qRound(corner.x() * (plain_image.width() - 1)),
+        qRound(corner.y() * (plain_image.height() - 1)));
+    if (qGreen(active.rgb()) <= qGreen(overscan.rgb()) + 15) {
+      std::cerr << "Active CRT raster reached a clipped glass corner.\n";
+      return false;
+    }
+  }
   if (scanline_energy * 100 >= plain_energy * 94) {
     std::cerr << "Scanline separation did not materially shape the raster: "
               << scanline_energy << " vs " << plain_energy << ".\n";
+    return false;
+  }
+
+  p2000c::CrtEffects dim = plain;
+  dim.brightness_percent = 30;
+  p2000c::CrtEffects bright = plain;
+  bright.brightness_percent = 150;
+  const std::uint64_t dim_energy = image_energy(render(dim));
+  const std::uint64_t bright_energy = image_energy(render(bright));
+  if (bright_energy * 10 <= dim_energy * 14) {
+    std::cerr << "CRT brightness control did not materially alter output: "
+              << dim_energy << " vs " << bright_energy << ".\n";
     return false;
   }
 
@@ -276,8 +321,12 @@ bool validate_crt_effect_rendering() {
   persistent_display.render(&cleared);
   auto cell_energy = [](const QImage& image) {
     std::uint64_t energy = 0;
-    for (int y = 120; y < 132; ++y) {
-      for (int x = 280; x < 287; ++x) {
+    const QRectF active = active_crt_area(image.size());
+    const QRectF cell(active.left() + 40.0 * active.width() / 80.0,
+                      active.top() + 10.0 * active.height() / 24.0,
+                      active.width() / 80.0, active.height() / 24.0);
+    for (int y = qCeil(cell.top()); y < qFloor(cell.bottom()); ++y) {
+      for (int x = qCeil(cell.left()); x < qFloor(cell.right()); ++x) {
         energy += qGreen(image.pixel(x, y));
       }
     }
@@ -285,6 +334,86 @@ bool validate_crt_effect_rendering() {
   };
   if (cell_energy(afterglow) <= cell_energy(cleared) * 2) {
     std::cerr << "Phosphor persistence did not retain extinguished pixels.\n";
+    return false;
+  }
+
+  p2000c::DisplayWidget stable_display;
+  stable_display.setFixedSize(560, 288);
+  stable_display.set_cursor(0, 0, false);
+  stable_display.set_crt_effects(persistence);
+  stable_display.set_screen(lit_screen, lit_attributes);
+  QImage stable_first(stable_display.size(), QImage::Format_ARGB32);
+  stable_first.fill(Qt::black);
+  stable_display.render(&stable_first);
+  QEventLoop persistence_wait;
+  QTimer::singleShot(50, &persistence_wait, &QEventLoop::quit);
+  persistence_wait.exec();
+  QImage stable_second(stable_display.size(), QImage::Format_ARGB32);
+  stable_second.fill(Qt::black);
+  stable_display.render(&stable_second);
+  if (stable_first != stable_second) {
+    std::cerr << "Persistence changed a stationary phosphor image.\n";
+    return false;
+  }
+
+  p2000c::CrtEffects flicker = plain;
+  flicker.flicker = true;
+  stable_display.set_crt_effects(flicker);
+  QImage flicker_first(stable_display.size(), QImage::Format_ARGB32);
+  flicker_first.fill(Qt::black);
+  stable_display.render(&flicker_first);
+  QEventLoop flicker_wait;
+  QTimer::singleShot(35, &flicker_wait, &QEventLoop::quit);
+  flicker_wait.exec();
+  QImage flicker_second(stable_display.size(), QImage::Format_ARGB32);
+  flicker_second.fill(Qt::black);
+  stable_display.render(&flicker_second);
+  if (flicker_first == flicker_second) {
+    std::cerr << "Refresh flicker did not modulate screen brightness.\n";
+    return false;
+  }
+  const std::uint64_t flicker_first_energy = image_energy(flicker_first);
+  const std::uint64_t flicker_second_energy = image_energy(flicker_second);
+  const std::uint64_t flicker_delta =
+      flicker_first_energy > flicker_second_energy
+          ? flicker_first_energy - flicker_second_energy
+          : flicker_second_energy - flicker_first_energy;
+  if (flicker_delta * 100 <
+      std::max(flicker_first_energy, flicker_second_energy)) {
+    std::cerr << "Refresh flicker modulation was still imperceptibly small.\n";
+    return false;
+  }
+  return true;
+}
+
+/** Checks that a latched MOTON signal cannot leave spindle audio looping. */
+bool validate_floppy_audio_timeout() {
+  using Device = p2000c::P2000cMachine::StorageDevice;
+  using Operation = p2000c::P2000cMachine::StorageOperation;
+  p2000c::HardwareAudio audio;
+  audio.play_storage_activity(
+      {Device::kFloppy, Operation::kMotorStart, 0, 0, 400});
+  if (!audio.floppy_motor_active()) {
+    std::cerr << "Floppy spindle audio did not start.\n";
+    return false;
+  }
+  QEventLoop wait;
+  QTimer::singleShot(p2000c::HardwareAudio::kFloppyIdleTimeoutMs + 100, &wait,
+                     &QEventLoop::quit);
+  wait.exec();
+  if (audio.floppy_motor_active()) {
+    std::cerr << "Floppy spindle audio did not stop after inactivity.\n";
+    return false;
+  }
+  audio.play_storage_activity({Device::kFloppy, Operation::kRead, 0, 0, 120});
+  if (!audio.floppy_motor_active()) {
+    std::cerr << "Floppy activity did not restart an idle spindle.\n";
+    return false;
+  }
+  audio.play_storage_activity(
+      {Device::kFloppy, Operation::kMotorStop, 0, 0, 100});
+  if (audio.floppy_motor_active()) {
+    std::cerr << "Explicit floppy motor-off did not stop the spindle.\n";
     return false;
   }
   return true;
@@ -298,6 +427,7 @@ int main(int argc, char* argv[]) {
   }
   qputenv("XDG_DATA_HOME", argv[1]);
   qputenv("XDG_CONFIG_HOME", argv[1]);
+  qputenv("ALSOFT_DRIVERS", "null");
   QApplication application(argc, argv);
   QApplication::setApplicationName("P2000C Emulator UI Test");
   QApplication::setOrganizationName("P2000C Emulator Project");
@@ -320,7 +450,7 @@ int main(int argc, char* argv[]) {
   obsolete_system.close();
 
   if (!validate_attribute_rendering() || !validate_graphics_rendering() ||
-      !validate_crt_effect_rendering()) {
+      !validate_crt_effect_rendering() || !validate_floppy_audio_timeout()) {
     return 1;
   }
 
@@ -334,24 +464,130 @@ int main(int argc, char* argv[]) {
   settings.setValue("display/effects/curvature", false);
   settings.setValue("display/effects/vignette", false);
   settings.setValue("display/effects/noise", true);
+  settings.setValue("display/effects/flicker", true);
   settings.setValue("display/effects/persistenceHalfLifeMs", 95);
+  settings.setValue("display/effects/brightnessPercent", 125);
+  settings.setValue("audio/enabled", false);
+  settings.setValue("audio/volume", 62);
+  settings.setValue("machine/storageDelays", false);
 
   p2000c::MainWindow window;
   auto* display = window.findChild<p2000c::DisplayWidget*>();
   QAction* resolution = find_action(&window, "840 x 432");
   QAction* screen_color = find_action(&window, "Screen &Appearance...");
   QAction* screenshot = find_named_action(&window, "saveScreenshotAction");
+  QAction* sound_volume =
+      find_named_action(&window, "hardwareSoundVolumeAction");
+  QAction* about = find_named_action(&window, "aboutAction");
+  QAction* hardware_delays =
+      find_named_action(&window, "enableHardwareDelaysAction");
   if (display == nullptr || resolution == nullptr || screen_color == nullptr ||
-      screenshot == nullptr ||
+      screenshot == nullptr || sound_volume == nullptr || about == nullptr ||
+      hardware_delays == nullptr ||
+      window.windowIcon().isNull() ||
+      hardware_delays->isChecked() ||
       screenshot->shortcut() != QKeySequence(Qt::CTRL | Qt::SHIFT |
                                              Qt::Key_S)) {
     return 1;
+  }
+  bool about_valid = false;
+  QTimer::singleShot(0, [&about_valid]() {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    auto* tabs = dialog != nullptr
+                     ? dialog->findChild<QTabWidget*>("aboutTabs")
+                     : nullptr;
+    auto* overview = dialog != nullptr
+                         ? dialog->findChild<QTextBrowser*>("aboutOverview")
+                         : nullptr;
+    auto* logo =
+        dialog != nullptr ? dialog->findChild<QLabel*>("aboutLogo") : nullptr;
+    auto* notices =
+        dialog != nullptr
+            ? dialog->findChild<QTextBrowser*>("aboutThirdPartyNotices")
+            : nullptr;
+    auto* license = dialog != nullptr
+                        ? dialog->findChild<QTextBrowser*>("aboutLicenseText")
+                        : nullptr;
+    auto* third_party_licenses =
+        dialog != nullptr
+            ? dialog->findChild<QTextBrowser*>("aboutThirdPartyLicenses")
+            : nullptr;
+    auto* buttons =
+        dialog != nullptr
+            ? dialog->findChild<QDialogButtonBox*>("aboutButtons")
+            : nullptr;
+    about_valid =
+        tabs != nullptr && tabs->count() == 4 && overview != nullptr &&
+        logo != nullptr && !logo->pixmap().isNull() &&
+        overview->toPlainText().contains(P2000C_VERSION) &&
+        overview->toPlainText().contains("not affiliated") &&
+        notices != nullptr && notices->toPlainText().contains("Font Awesome") &&
+        notices->toPlainText().contains("MAME") &&
+        notices->toPlainText().contains("redistribution rights") &&
+        third_party_licenses != nullptr &&
+        third_party_licenses->toPlainText().contains("MIT License") &&
+        third_party_licenses->toPlainText().contains("BSD-3-Clause") &&
+        third_party_licenses->toPlainText().contains("CC BY 4.0") &&
+        license != nullptr &&
+        license->toPlainText().contains("GNU GENERAL PUBLIC LICENSE") &&
+        buttons != nullptr;
+    if (buttons != nullptr) {
+      buttons->button(QDialogButtonBox::Close)->click();
+    } else if (dialog != nullptr) {
+      dialog->reject();
+    }
+  });
+  about->trigger();
+  if (!about_valid) {
+    std::cerr << "About dialog omitted package or third-party disclosures.\n";
+    return 1;
+  }
+  QTimer::singleShot(0, []() {
+    auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    auto* slider = dialog != nullptr
+                       ? dialog->findChild<QSlider*>(
+                             "hardwareSoundVolumeSlider")
+                       : nullptr;
+    auto* buttons = dialog != nullptr
+                        ? dialog->findChild<QDialogButtonBox*>(
+                              "hardwareSoundVolumeButtons")
+                        : nullptr;
+    if (slider == nullptr || buttons == nullptr || slider->value() != 62) {
+      if (dialog != nullptr) {
+        dialog->reject();
+      }
+      return;
+    }
+    slider->setValue(37);
+    buttons->button(QDialogButtonBox::Ok)->click();
+  });
+  sound_volume->trigger();
+  if (settings.value("audio/volume").toInt() != 37) {
+    std::cerr << "Hardware sound volume was not persisted.\n";
+    return 1;
+  }
+  hardware_delays->setChecked(true);
+  if (!settings.value("machine/storageDelays").toBool()) {
+    std::cerr << "Hardware-delay preference was not persisted.\n";
+    return 1;
+  }
+  for (const QString& sample : {
+           ":/audio/525_spin_start_loaded.wav",
+           ":/audio/525_spin_loaded.wav", ":/audio/525_spin_end.wav",
+           ":/audio/525_seek_6ms.wav", ":/audio/525_step_1_1.wav"}) {
+    QFile file(sample);
+    if (!file.open(QIODevice::ReadOnly) || file.read(4) != "RIFF") {
+      std::cerr << "A bundled 5.25-inch drive sample is unavailable.\n";
+      return 1;
+    }
   }
   const p2000c::CrtEffects saved_effects = display->crt_effects();
   if (display->base_color() != saved_color || saved_effects.scanlines ||
       saved_effects.bloom || saved_effects.persistence ||
       saved_effects.curvature || saved_effects.vignette ||
-      !saved_effects.noise || saved_effects.persistence_half_life_ms != 95) {
+      !saved_effects.noise || !saved_effects.flicker ||
+      saved_effects.persistence_half_life_ms != 95 ||
+      saved_effects.brightness_percent != 125) {
     std::cerr << "Saved screen appearance was not restored.\n";
     return 1;
   }
@@ -375,17 +611,27 @@ int main(int argc, char* argv[]) {
         dialog != nullptr
             ? dialog->findChild<QCheckBox*>("screenNoiseCheckBox")
             : nullptr;
+    auto* flicker =
+        dialog != nullptr
+            ? dialog->findChild<QCheckBox*>("screenFlickerCheckBox")
+            : nullptr;
     auto* persistence_half_life =
         dialog != nullptr
             ? dialog->findChild<QSlider*>("screenPersistenceHalfLifeSlider")
+            : nullptr;
+    auto* crt_brightness =
+        dialog != nullptr
+            ? dialog->findChild<QDial*>("screenCrtBrightnessDial")
             : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("screenColorButtons")
             : nullptr;
     if (buttons == nullptr || scanlines == nullptr || noise == nullptr ||
+        flicker == nullptr || !flicker->isChecked() ||
         persistence_half_life == nullptr ||
-        persistence_half_life->value() != 95) {
+        persistence_half_life->value() != 95 || crt_brightness == nullptr ||
+        crt_brightness->value() != 125) {
       if (dialog != nullptr) {
         dialog->reject();
       }
@@ -405,8 +651,12 @@ int main(int argc, char* argv[]) {
           default_effects.scanlines ||
       settings.value("display/effects/noise").toBool() !=
           default_effects.noise ||
+      settings.value("display/effects/flicker").toBool() !=
+          default_effects.flicker ||
       settings.value("display/effects/persistenceHalfLifeMs").toInt() !=
-          default_effects.persistence_half_life_ms) {
+          default_effects.persistence_half_life_ms ||
+      settings.value("display/effects/brightnessPercent").toInt() !=
+          default_effects.brightness_percent) {
     std::cerr << "Accepted screen appearance was not applied and persisted.\n";
     return 1;
   }
@@ -492,13 +742,14 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   system->trigger();
-  if (!window.statusBar()->currentMessage().contains("system floppy")) {
+  if (!window.statusBar()->currentMessage().contains("CP/M 2.2 template")) {
     std::cerr << "Bundled system floppy action did not mount media.\n";
     return 1;
   }
 
-  const QString system_path = current_bundled_copy(
-      media_directory, "system_drive_a.flp", ":/images/system.flp");
+  auto* drive_a_current = window.findChild<QAction*>("currentFloppyAAction");
+  const QString system_path =
+      drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
   if (system_path.isEmpty() ||
       !validate_image(system_path,
                       p2000c::RawDiskImage::Kind::kFloppy)) {
@@ -506,14 +757,54 @@ int main(int argc, char* argv[]) {
   }
   auto* drive_a_status = window.findChild<QLabel*>("floppyDriveAStatus");
   auto* drive_a_menu = window.findChild<QMenu*>("floppyDriveAMenu");
-  auto* drive_a_current = window.findChild<QAction*>("currentFloppyAAction");
+  auto* drive_panel = window.findChild<QWidget*>("driveActivityPanel");
+  auto* drive_a_led = window.findChild<QWidget*>("floppyDriveAActivityLed");
+  auto* drive_a_icon = window.findChild<QLabel*>("floppyDriveATypeIcon");
+  auto* drive_a_card = window.findChild<QFrame*>("floppyDriveACard");
+  QImage idle_led(drive_a_led != nullptr ? drive_a_led->size() : QSize(),
+                  QImage::Format_ARGB32_Premultiplied);
+  idle_led.fill(Qt::transparent);
+  if (drive_a_led != nullptr) {
+    drive_a_led->render(&idle_led);
+  }
   if (drive_a_status == nullptr || drive_a_menu == nullptr ||
-      drive_a_current == nullptr ||
+      drive_a_current == nullptr || drive_panel == nullptr ||
+      drive_a_led == nullptr || drive_a_icon == nullptr ||
+      drive_a_icon->pixmap().isNull() || drive_a_card == nullptr ||
+      drive_a_card->frameShape() != QFrame::NoFrame ||
+      window.palette().color(QPalette::Window) != QColor("#e8dcb3") ||
+      !qApp->styleSheet().contains(
+          "QFrame#driveActivityPanel {\n      background: #f5eac6;") ||
+      idle_led.isNull() ||
+      qGray(idle_led.pixel(9, 8)) <= qGray(idle_led.pixel(12, 12)) ||
+      idle_led.pixelColor(12, 12) == idle_led.pixelColor(0, 0) ||
       !drive_a_status->text().contains("system_drive_a.flp") ||
+      !drive_a_status->text().contains("TEMPORARY") ||
       !drive_a_status->toolTip().contains(system_path) ||
       !drive_a_menu->title().contains("system_drive_a.flp") ||
       !drive_a_current->isChecked() || !system->isChecked()) {
     std::cerr << "Drive A media indicators did not show the mounted image.\n";
+    return 1;
+  }
+  QFile system_master(":/images/system.flp");
+  QFile system_session(system_path);
+  if (!system_master.open(QIODevice::ReadOnly) ||
+      !system_session.open(QIODevice::ReadOnly) ||
+      system_master.readAll() != system_session.readAll()) {
+    std::cerr << "Bundled system template was not copied exactly.\n";
+    return 1;
+  }
+  system_session.close();
+  if (!system_session.open(QIODevice::ReadWrite) ||
+      !system_session.seek(1234) || system_session.write("X", 1) != 1) {
+    return 1;
+  }
+  system_session.close();
+  system->trigger();
+  system_master.seek(0);
+  if (!system_session.open(QIODevice::ReadOnly) ||
+      system_session.readAll() != system_master.readAll()) {
+    std::cerr << "Reopening a bundled template did not discard changes.\n";
     return 1;
   }
   QFile preserved_obsolete(obsolete_system_path);
@@ -531,8 +822,9 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   zork->trigger();
-  const QString zork_path = current_bundled_copy(
-      media_directory, "zork_drive_b.flp", ":/images/zork.flp");
+  auto* drive_b_current = window.findChild<QAction*>("currentFloppyBAction");
+  const QString zork_path =
+      drive_b_current != nullptr ? drive_b_current->statusTip() : QString();
   if (zork_path.isEmpty() ||
       !validate_image(zork_path,
                       p2000c::RawDiskImage::Kind::kFloppy) ||
@@ -541,8 +833,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   chess->trigger();
-  const QString chess_path = current_bundled_copy(
-      media_directory, "chess_drive_b.flp", ":/images/chess.flp");
+  const QString chess_path = drive_b_current->statusTip();
   if (chess_path.isEmpty() ||
       !validate_image(chess_path,
                       p2000c::RawDiskImage::Kind::kFloppy) ||
@@ -551,8 +842,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   ipldump->trigger();
-  const QString ipldump_path = current_bundled_copy(
-      media_directory, "ipldump_drive_b.flp", ":/images/ipldump.flp");
+  const QString ipldump_path = drive_b_current->statusTip();
   if (ipldump_path.isEmpty() ||
       !validate_image(ipldump_path,
                       p2000c::RawDiskImage::Kind::kFloppy) ||
@@ -571,14 +861,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   auto* drive_b_status = window.findChild<QLabel*>("floppyDriveBStatus");
-  auto* drive_b_current = window.findChild<QAction*>("currentFloppyBAction");
   if (drive_b_status == nullptr || drive_b_current == nullptr ||
       !drive_b_status->text().contains("blank_drive_b.flp") ||
       !drive_b_current->isChecked() || !blank->isChecked()) {
     std::cerr << "Drive B media indicators did not show the mounted image.\n";
     return 1;
   }
-  if (!validate_image(QDir(media_directory).filePath("blank_drive_b.flp"),
+  if (!validate_image(drive_b_current->statusTip(),
                       p2000c::RawDiskImage::Kind::kFloppy)) {
     return 1;
   }
@@ -592,12 +881,46 @@ int main(int argc, char* argv[]) {
     const QString filename = QString("hard_disk_%1.hda").arg(drive);
     if (status == nullptr || current == nullptr || bundled == nullptr ||
         !status->text().contains(filename) || !current->isChecked() ||
-        !bundled->isChecked() ||
-        !validate_image(QDir(media_directory).filePath(filename),
+        !status->text().contains("TEMPORARY") || !bundled->isChecked() ||
+        !validate_image(current->statusTip(),
                         p2000c::RawDiskImage::Kind::kHardDisk)) {
       std::cerr << "Default SASI hard-disk working image was not mounted.\n";
       return 1;
     }
+  }
+
+  auto* save_floppy =
+      window.findChild<QAction*>("saveFloppyBAsAction");
+  auto* save_hard_disk =
+      window.findChild<QAction*>("saveHardDisk1AsAction");
+  auto* recent_menu = window.findChild<QMenu*>("recentFloppyBMenu");
+  auto* hard_led = window.findChild<QWidget*>("hardDisk1ActivityLed");
+  auto* hard_icon = window.findChild<QLabel*>("hardDisk1TypeIcon");
+  if (save_floppy == nullptr || save_hard_disk == nullptr ||
+      recent_menu == nullptr || hard_led == nullptr || hard_icon == nullptr ||
+      hard_icon->pixmap().isNull() ||
+      !save_floppy->isEnabled() || !save_hard_disk->isEnabled()) {
+    std::cerr << "Media retention or side-panel controls are missing.\n";
+    return 1;
+  }
+  QStringList recent_paths;
+  for (int index = 0; index < 6; ++index) {
+    const QString path =
+        QDir(argv[1]).filePath(QString("recent-%1.flp").arg(index));
+    QFile::remove(path);
+    if (!QFile::copy(":/images/system.flp", path) ||
+        !window.mount_floppy(filesystem_path(path), 1)) {
+      return 1;
+    }
+    recent_paths.append(QFileInfo(path).absoluteFilePath());
+  }
+  const QStringList stored_recent =
+      settings.value("media/recent/floppy1").toStringList();
+  if (stored_recent.size() != 5 || stored_recent.front() != recent_paths.back() ||
+      stored_recent.contains(recent_paths.front()) ||
+      recent_menu->actions().size() != 5) {
+    std::cerr << "Per-drive recent images were not limited to the latest five.\n";
+    return 1;
   }
   return 0;
 }

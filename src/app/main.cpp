@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QIcon>
 #include <filesystem>
 
 #include "app/main_window.h"
@@ -6,7 +7,9 @@
 int main(int argc, char* argv[]) {
   QApplication application(argc, argv);
   QApplication::setApplicationName("P2000C Emulator");
+  QApplication::setApplicationVersion(P2000C_VERSION);
   QApplication::setOrganizationName("P2000C Emulator Project");
+  QApplication::setWindowIcon(QIcon(":/logo/logo-p2000c.svg"));
 
   p2000c::MainWindow window;
   if (argc > 1) {

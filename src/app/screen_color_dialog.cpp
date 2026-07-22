@@ -2,6 +2,7 @@
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QDial>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QKeyEvent>
@@ -208,7 +209,7 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
   });
   layout->addWidget(wheel_, 1, Qt::AlignHCenter);
 
-  auto* brightness_label = new QLabel("Brightness", this);
+  auto* brightness_label = new QLabel("Phosphor color value", this);
   layout->addWidget(brightness_label);
   brightness_ = new QSlider(Qt::Horizontal, this);
   brightness_->setObjectName("screenBrightnessSlider");
@@ -253,6 +254,8 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
       make_effect("Glass and edge shading", "screenVignetteCheckBox", 2, 0);
   noise_ =
       make_effect("Subtle analogue noise", "screenNoiseCheckBox", 2, 1);
+  flicker_ =
+      make_effect("Refresh flicker", "screenFlickerCheckBox", 3, 0);
   scanlines_->setToolTip(
       "Leaves a narrow dark interval between successive electron-beam rows.");
   bloom_->setToolTip(
@@ -265,6 +268,9 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
       "Adds edge darkening and a faint highlight from the monitor glass.");
   noise_->setToolTip(
       "Adds a very small amount of animated monochrome video noise.");
+  flicker_->setToolTip(
+      "Adds a subtle whole-screen brightness modulation, independently of "
+      "phosphor decay.");
   persistence_half_life_label_ = new QLabel(effects_group);
   persistence_half_life_label_->setObjectName(
       "screenPersistenceHalfLifeLabel");
@@ -278,29 +284,51 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
   persistence_half_life_->setToolTip(
       "Controls how quickly an extinguished phosphor trace fades. Shorter "
       "times look crisper; longer times leave a more visible trail.");
-  effects_layout->addWidget(persistence_half_life_label_, 3, 0);
-  effects_layout->addWidget(persistence_half_life_, 3, 1);
+  effects_layout->addWidget(persistence_half_life_label_, 4, 0);
+  effects_layout->addWidget(persistence_half_life_, 4, 1);
+  crt_brightness_label_ = new QLabel(effects_group);
+  crt_brightness_label_->setObjectName("screenCrtBrightnessLabel");
+  crt_brightness_ = new QDial(effects_group);
+  crt_brightness_->setObjectName("screenCrtBrightnessDial");
+  crt_brightness_->setRange(CrtEffects::kMinimumBrightnessPercent,
+                            CrtEffects::kMaximumBrightnessPercent);
+  crt_brightness_->setSingleStep(2);
+  crt_brightness_->setPageStep(10);
+  crt_brightness_->setNotchesVisible(true);
+  crt_brightness_->setWrapping(false);
+  crt_brightness_->setFixedSize(72, 72);
+  crt_brightness_->setAccessibleName("CRT brightness control");
+  crt_brightness_->setToolTip(
+      "Models the P2000C monitor's physical brightness wheel without changing "
+      "the selected phosphor color.");
+  effects_layout->addWidget(crt_brightness_label_, 5, 0);
+  effects_layout->addWidget(crt_brightness_, 5, 1, Qt::AlignLeft);
   select_effects(selected_effects_);
   auto effects_changed = [this]() {
     selected_effects_ = {
         scanlines_->isChecked(), bloom_->isChecked(),
         persistence_->isChecked(), curvature_->isChecked(),
         vignette_->isChecked(),   noise_->isChecked(),
+        flicker_->isChecked(),
         persistence_half_life_->value(),
+        crt_brightness_->value(),
     };
     persistence_half_life_->setEnabled(persistence_->isChecked());
     persistence_half_life_label_->setEnabled(persistence_->isChecked());
     persistence_half_life_label_->setText(
         QString("Persistence half-life: %1 ms")
             .arg(persistence_half_life_->value()));
+    crt_brightness_label_->setText(
+        QString("CRT brightness: %1%").arg(crt_brightness_->value()));
     update_preview();
   };
   for (QCheckBox* effect : {scanlines_, bloom_, persistence_, curvature_,
-                            vignette_, noise_}) {
+                            vignette_, noise_, flicker_}) {
     connect(effect, &QCheckBox::toggled, this, effects_changed);
   }
   connect(persistence_half_life_, &QSlider::valueChanged, this,
           effects_changed);
+  connect(crt_brightness_, &QDial::valueChanged, this, effects_changed);
   layout->addWidget(effects_group);
 
   auto* buttons =
@@ -339,6 +367,7 @@ void ScreenColorDialog::select_effects(const CrtEffects& effects) {
   curvature_->setChecked(effects.curvature);
   vignette_->setChecked(effects.vignette);
   noise_->setChecked(effects.noise);
+  flicker_->setChecked(effects.flicker);
   persistence_half_life_->setValue(std::clamp(
       effects.persistence_half_life_ms,
       CrtEffects::kMinimumPersistenceHalfLifeMs,
@@ -348,6 +377,11 @@ void ScreenColorDialog::select_effects(const CrtEffects& effects) {
   persistence_half_life_label_->setText(
       QString("Persistence half-life: %1 ms")
           .arg(persistence_half_life_->value()));
+  crt_brightness_->setValue(std::clamp(
+      effects.brightness_percent, CrtEffects::kMinimumBrightnessPercent,
+      CrtEffects::kMaximumBrightnessPercent));
+  crt_brightness_label_->setText(
+      QString("CRT brightness: %1%").arg(crt_brightness_->value()));
   update_preview();
 }
 

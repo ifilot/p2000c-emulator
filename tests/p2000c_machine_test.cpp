@@ -83,8 +83,20 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   p2000c::P2000cMachine machine;
+  machine.set_storage_delays_enabled(false);
+  if (machine.storage_delays_enabled()) {
+    std::cerr << "Storage latency could not be disabled.\n";
+    return 1;
+  }
+  machine.set_storage_delays_enabled(true);
 
   p2000c::Terminal graphics_terminal;
+  const std::uint64_t initial_bell = graphics_terminal.bell_revision();
+  graphics_terminal.receive(0x07);
+  if (graphics_terminal.bell_revision() != initial_bell + 1) {
+    std::cerr << "BEL did not activate the terminal beeper event.\n";
+    return 1;
+  }
   auto send_terminal = [&](std::initializer_list<std::uint8_t> bytes) {
     for (const std::uint8_t byte : bytes) {
       graphics_terminal.receive(byte);
@@ -239,6 +251,11 @@ int main(int argc, char* argv[]) {
   }
 
   p2000c::P2000cMachine boot_machine;
+  std::vector<p2000c::P2000cMachine::StorageActivity> storage_activity;
+  boot_machine.set_storage_activity_handler(
+      [&](const p2000c::P2000cMachine::StorageActivity& activity) {
+        storage_activity.push_back(activity);
+      });
   if (!boot_machine.load_ipl_rom(argv[1], &error) ||
       !boot_machine.mount_floppy_a(argv[2], &error) ||
       !boot_machine.mount_floppy_b(argv[2], &error) ||
@@ -247,7 +264,7 @@ int main(int argc, char* argv[]) {
     std::cerr << error << '\n';
     return 1;
   }
-  boot_machine.run_for(20'000'000);
+  boot_machine.run_for(60'000'000);
   const auto& boot_screen = boot_machine.terminal().screen();
   const std::string boot_text(boot_screen.begin(), boot_screen.end());
   if (boot_text.find("CP/M 2.2") == std::string::npos ||
@@ -256,6 +273,19 @@ int main(int argc, char* argv[]) {
               << boot_machine.program_counter() << " cycles=" << std::dec
               << boot_machine.cycles() << '\n';
     print_screen(boot_machine);
+    return 1;
+  }
+  const bool realistic_floppy_read =
+      std::any_of(storage_activity.begin(), storage_activity.end(),
+                  [](const auto& activity) {
+                    return activity.device ==
+                               p2000c::P2000cMachine::StorageDevice::kFloppy &&
+                           activity.operation ==
+                               p2000c::P2000cMachine::StorageOperation::kRead &&
+                           activity.duration_ms >= 118;
+                  });
+  if (!realistic_floppy_read) {
+    std::cerr << "Floppy access did not expose its physical operation timing.\n";
     return 1;
   }
 
@@ -311,6 +341,19 @@ int main(int argc, char* argv[]) {
     print_screen(boot_machine);
     return 1;
   }
+  const bool realistic_hard_disk_read =
+      std::any_of(storage_activity.begin(), storage_activity.end(),
+                  [](const auto& activity) {
+                    return activity.device == p2000c::P2000cMachine::
+                                                  StorageDevice::kHardDisk &&
+                           activity.operation == p2000c::P2000cMachine::
+                                                     StorageOperation::kRead &&
+                           activity.duration_ms >= 60;
+                  });
+  if (!realistic_hard_disk_read) {
+    std::cerr << "SASI access did not expose its physical operation timing.\n";
+    return 1;
+  }
 
   p2000c::P2000cMachine ddt_machine;
   if (!ddt_machine.load_ipl_rom(argv[1], &error) ||
@@ -318,7 +361,7 @@ int main(int argc, char* argv[]) {
     std::cerr << error << '\n';
     return 1;
   }
-  ddt_machine.run_for(20'000'000);
+  ddt_machine.run_for(60'000'000);
   for (const char key : std::string("DDT\r")) {
     ddt_machine.queue_key(static_cast<std::uint8_t>(key));
   }
@@ -351,7 +394,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::remove(compilation_floppy);
     return 1;
   }
-  compilation_machine.run_for(20'000'000);
+  compilation_machine.run_for(60'000'000);
   for (const char key : std::string("B:\rASM IPLDUMP\r")) {
     compilation_machine.queue_key(static_cast<std::uint8_t>(key));
   }
@@ -415,7 +458,7 @@ int main(int argc, char* argv[]) {
     std::cerr << error << '\n';
     return 1;
   }
-  zork_machine.run_for(20'000'000);
+  zork_machine.run_for(60'000'000);
   for (const char key : std::string("B:\rZORK1\r")) {
     zork_machine.queue_key(static_cast<std::uint8_t>(key));
   }
@@ -435,7 +478,7 @@ int main(int argc, char* argv[]) {
     std::cerr << error << '\n';
     return 1;
   }
-  chess_machine.run_for(20'000'000);
+  chess_machine.run_for(60'000'000);
   for (const char key : std::string("B:\rCHESS\r")) {
     chess_machine.queue_key(static_cast<std::uint8_t>(key));
   }
