@@ -98,13 +98,13 @@ int main(int argc, char* argv[]) {
       0x3e, 0x00, 0xd3, 0x00,  // DMA address low
       0x3e, 0x20, 0xd3, 0x00,  // DMA address high
       0x3e, 0xff, 0xd3, 0x01,  // DMA count low (512 bytes)
-      0x3e, 0x01, 0xd3, 0x01,  // DMA count high
+      0x3e, 0x00, 0xd3, 0x01,  // DMA count high
       0x3e, 0x01, 0xd3, 0x08,  // Enable DMA channel zero
       0x3e, 0x04, 0xd3, 0x18,  // Select the SASI target
       0x3e, 0x08, 0xd3, 0x16,  // READ(6)
       0x3e, 0x00, 0xd3, 0x16,  // Unit zero and LBA high
       0x3e, 0x00, 0xd3, 0x16,  // LBA middle
-      0x3e, 0x00, 0xd3, 0x16,  // LBA low
+      0x3e, 0x07, 0xd3, 0x16,  // LBA low
       0x3e, 0x01, 0xd3, 0x16,  // One block
       0x3e, 0x00, 0xd3, 0x16,  // Control byte
       0xdb, 0x18,              // Read SASI control immediately
@@ -140,7 +140,8 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   immediate_sasi_machine.run_for(20'000);
-  if (!saw_sasi_read || immediate_sasi_machine.read_memory(0x1000) != 0x9b) {
+  if (!saw_sasi_read || immediate_sasi_machine.read_memory(0x1000) != 0x9b ||
+      immediate_sasi_machine.hard_disk_block(0) != 7) {
     std::cerr << "SASI read was not completed without hardware latency.\n";
     return 1;
   }

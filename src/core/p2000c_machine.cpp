@@ -88,6 +88,8 @@ bool P2000cMachine::mount_floppy(std::size_t drive,
     return false;
   }
   floppy_drives_[drive] = std::move(*image);
+  fdc_tracks_[drive] = 0;
+  fdc_sides_[drive] = 0;
   return true;
 }
 
@@ -104,6 +106,7 @@ bool P2000cMachine::mount_hard_disk(std::size_t drive,
     return false;
   }
   hard_disks_[drive] = std::move(*image);
+  sasi_blocks_[drive] = 0;
   return true;
 }
 
@@ -140,11 +143,13 @@ void P2000cMachine::reset() {
   fdc_output_ = 0;
   fdc_sense_status_ = 0xc0;
   fdc_tracks_.fill(0);
+  fdc_sides_.fill(0);
   fdc_sense_track_ = 0;
   sasi_phase_ = SasiPhase::kBusFree;
   sasi_command_.fill(0);
   sasi_command_length_ = 0;
   sasi_status_ = 0;
+  sasi_blocks_.fill(0);
   sio_b_register_ = 0;
   sio_b_receive_byte_ = 0;
   sio_b_receive_ready_ = false;
@@ -513,6 +518,10 @@ void P2000cMachine::complete_fdc_command() {
                                   1));
     std::vector<std::uint8_t> track_data;
     const RawDiskImage* image = floppy_drive(drive);
+    if (drive < fdc_tracks_.size()) {
+      fdc_tracks_[drive] = cylinder;
+      fdc_sides_[drive] = head;
+    }
     bool media_ok = image != nullptr;
     for (std::uint16_t id = first_sector; media_ok && id <= last_sector; ++id) {
       const std::span<const std::uint8_t> sector =
@@ -563,6 +572,10 @@ void P2000cMachine::complete_fdc_command() {
         drive < floppy_drives_.size() && floppy_drives_[drive].has_value()
             ? &*floppy_drives_[drive]
             : nullptr;
+    if (drive < fdc_tracks_.size()) {
+      fdc_tracks_[drive] = cylinder;
+      fdc_sides_[drive] = head;
+    }
     begin_storage_activity(
         {StorageDevice::kFloppy, StorageOperation::kWrite, drive, 0,
          105 + requested_sectors * 13},
@@ -698,6 +711,9 @@ void P2000cMachine::execute_sasi_command() {
                            ? &*hard_disks_[unit]
                            : nullptr;
   bool okay = disk != nullptr;
+  if (unit < sasi_blocks_.size()) {
+    sasi_blocks_[unit] = lba + block_count - 1;
+  }
 
   if (okay && opcode == 0x08) {
     begin_storage_activity(

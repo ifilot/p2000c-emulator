@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(CTest)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,9 +42,19 @@ target_compile_options(p2000c_core PRIVATE
 add_executable(p2000c_media_info tools/media_info.cpp)
 target_link_libraries(p2000c_media_info PRIVATE p2000c_core)
 
+add_executable(p2000c_cli tools/p2000c_cli.cpp)
+target_link_libraries(p2000c_cli PRIVATE p2000c_core)
+install(TARGETS p2000c_cli
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT application
+)
+
 if(P2000C_BUILD_APP)
   find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
-  find_package(OpenAL REQUIRED)
+  if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+    find_package(OpenAL CONFIG REQUIRED)
+  else()
+    find_package(OpenAL REQUIRED)
+  endif()
   qt_standard_project_setup()
 
   qt_add_executable(p2000c
@@ -151,6 +162,10 @@ if(P2000C_BUILD_APP)
         "${P2000C_VCPKG_OPENAL_LICENSE}")
   elseif(EXISTS "/usr/share/doc/libopenal-dev/copyright")
     set(P2000C_OPENAL_LICENSE "/usr/share/doc/libopenal-dev/copyright")
+  elseif(EXISTS
+      "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openal-soft/COPYING")
+    set(P2000C_OPENAL_LICENSE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openal-soft/COPYING")
   endif()
   if(P2000C_OPENAL_LICENSE)
     install(FILES "${P2000C_OPENAL_LICENSE}"
@@ -164,6 +179,16 @@ if(P2000C_BUILD_APP)
     COMPONENT application
   )
   if(UNIX AND NOT APPLE)
+    set(P2000C_LINUX_OPENAL_INSTALL_CODE [=[
+      file(INSTALL
+        "$<TARGET_FILE:OpenAL::OpenAL>"
+        DESTINATION "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_LIBDIR@"
+        FOLLOW_SYMLINK_CHAIN)
+    ]=])
+    string(CONFIGURE "${P2000C_LINUX_OPENAL_INSTALL_CODE}"
+           P2000C_LINUX_OPENAL_INSTALL_CODE @ONLY)
+    install(CODE "${P2000C_LINUX_OPENAL_INSTALL_CODE}"
+      COMPONENT application)
     install(FILES packaging/org.p2000c.emulator.desktop
       DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
       COMPONENT application
@@ -190,6 +215,12 @@ if(P2000C_BUILD_APP)
   endif()
   install(SCRIPT "${p2000c_deploy_script}" COMPONENT application)
   if(WIN32)
+    set(P2000C_WINDOWS_EXTRA_RUNTIME_DIRECTORY
+        "$<TARGET_FILE_DIR:OpenAL::OpenAL>")
+    if(VCPKG_INSTALLED_DIR AND VCPKG_TARGET_TRIPLET)
+      set(P2000C_WINDOWS_EXTRA_RUNTIME_DIRECTORY
+          "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    endif()
     set(P2000C_WINDOWS_RUNTIME_INSTALL_CODE [=[
       file(GLOB_RECURSE p2000c_installed_libraries
         "${CMAKE_INSTALL_PREFIX}/share/qt6/plugins/*.dll")
@@ -202,6 +233,7 @@ if(P2000C_BUILD_APP)
         DIRECTORIES
           "$<TARGET_FILE_DIR:Qt6::Core>"
           "$<TARGET_FILE_DIR:OpenAL::OpenAL>"
+          "@P2000C_WINDOWS_EXTRA_RUNTIME_DIRECTORY@"
         PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
         POST_EXCLUDE_REGEXES
           ".*[\\\\/][Ww]indows[\\\\/][Ss]ystem32[\\\\/].*")
@@ -253,6 +285,15 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/images/chess.flp
             ${CMAKE_CURRENT_SOURCE_DIR}/images/ipldump.flp
             ${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
+  )
+
+  add_test(
+    NAME p2000c_cli_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/IPLDUMP.BIN
+            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake
   )
 
   if(P2000C_BUILD_APP)

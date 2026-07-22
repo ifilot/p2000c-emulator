@@ -103,6 +103,26 @@ void apply_p2000c_theme() {
       border-radius: 8px;
     }
     QFrame#driveActivityPanel QLabel { color: #262626; background: transparent; }
+    QLabel#drivePanelTitle {
+      color: #594a2e;
+      border: none;
+      border-bottom: 1px solid #c7b77e;
+      padding: 0 0 5px 0;
+    }
+    QFrame[driveCard="true"] {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #d1c18d;
+    }
+    QLabel[driveTypeIcon="true"] {
+      background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                  stop: 0 #777368, stop: 0.18 #34332d,
+                                  stop: 0.82 #292822, stop: 1 #878174);
+      border: 1px solid #5e594f;
+      border-radius: 3px;
+    }
+    QLabel[driveHeading="true"] { color: #4b3f2a; border: none; }
+    QLabel[mediaFilename="true"] { color: #625a42; border: none; }
     QTabWidget::pane { border: 1px solid #b5a065; background: #f5eac6; }
     QTabBar::tab {
       background: #d6c89a;
@@ -224,6 +244,202 @@ class DriveLed : public QWidget {
   int hold_ms_ = 0;
 };
 
+/** A compact provenance emblem for session-template and persistent media. */
+class MediaSourceBadge : public QWidget {
+ public:
+  explicit MediaSourceBadge(QWidget* parent = nullptr) : QWidget(parent) {
+    setFixedSize(30, 23);
+    set_template_copy(true);
+  }
+
+  void set_template_copy(bool template_copy) {
+    template_copy_ = template_copy;
+    if (template_copy_) {
+      setAccessibleName("Writable session copy of a bundled template");
+      setToolTip("Writable session copy; the bundled template remains pristine.");
+    } else {
+      setAccessibleName("Persistent saved image");
+      setToolTip("Persistent image; changes are written directly to this file.");
+    }
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient metal(0, 0, 0, height());
+    metal.setColorAt(0.0, QColor("#777368"));
+    metal.setColorAt(0.18, QColor("#34332d"));
+    metal.setColorAt(0.82, QColor("#292822"));
+    metal.setColorAt(1.0, QColor("#878174"));
+    painter.setPen(QPen(QColor("#5e594f"), 0.8));
+    painter.setBrush(metal);
+    painter.drawRoundedRect(QRectF(1.5, 1.5, 27.0, 20.0), 4.0, 4.0);
+
+    const auto draw_sheet = [&painter](const QRectF& sheet,
+                                       const QColor& fill) {
+      painter.setPen(QPen(QColor("#665a3b"), 0.8));
+      painter.setBrush(fill);
+      painter.drawRoundedRect(sheet, 1.7, 1.7);
+      painter.setPen(QPen(QColor(101, 86, 48, 145), 0.7));
+      painter.drawLine(sheet.left() + 3.0, sheet.top() + 5.0,
+                       sheet.right() - 2.5, sheet.top() + 5.0);
+      painter.drawLine(sheet.left() + 3.0, sheet.top() + 8.0,
+                       sheet.right() - 4.0, sheet.top() + 8.0);
+    };
+    if (template_copy_) {
+      draw_sheet(QRectF(10.0, 4.0, 12.5, 14.0), QColor("#cbb879"));
+      draw_sheet(QRectF(6.0, 6.0, 12.5, 14.0), QColor("#f1e4b9"));
+      painter.setPen(QPen(QColor("#71804e"), 1.5, Qt::SolidLine,
+                          Qt::RoundCap, Qt::RoundJoin));
+      painter.drawLine(QPointF(20.0, 16.5), QPointF(24.5, 12.0));
+      painter.drawLine(QPointF(24.5, 12.0), QPointF(24.5, 15.0));
+    } else {
+      draw_sheet(QRectF(7.0, 3.5, 14.0, 16.0), QColor("#f1e4b9"));
+      painter.setPen(QPen(QColor("#607a43"), 2.0, Qt::SolidLine,
+                          Qt::RoundCap, Qt::RoundJoin));
+      painter.drawPolyline(
+          QPolygonF{QPointF(16.5, 15.5), QPointF(19.0, 18.0),
+                    QPointF(24.5, 11.0)});
+    }
+  }
+
+ private:
+  bool template_copy_ = true;
+};
+
+/** A mechanical tape-counter-style display for live drive position. */
+class DrivePositionDisplay : public QWidget {
+ public:
+  enum class Kind { kFloppy, kHardDisk };
+
+  explicit DrivePositionDisplay(Kind kind, QWidget* parent = nullptr)
+      : QWidget(parent), kind_(kind) {
+    setMinimumSize(108, 32);
+    setMaximumHeight(32);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  }
+
+  void set_floppy_position(unsigned track, unsigned side, bool mounted) {
+    mounted_ = mounted;
+    primary_ = track;
+    secondary_ = side;
+    setAccessibleName(mounted ? QString("Track %1, side %2").arg(track).arg(side)
+                              : "No floppy position");
+    update();
+  }
+
+  void set_hard_disk_position(std::size_t block, bool mounted) {
+    mounted_ = mounted;
+    primary_ = block;
+    setAccessibleName(mounted ? QString("SASI block %1").arg(block)
+                              : "No hard-disk position");
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF housing = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    QLinearGradient bezel(housing.topLeft(), housing.bottomLeft());
+    bezel.setColorAt(0.0, QColor("#777368"));
+    bezel.setColorAt(0.18, QColor("#34332d"));
+    bezel.setColorAt(0.82, QColor("#292822"));
+    bezel.setColorAt(1.0, QColor("#878174"));
+    painter.setPen(QPen(QColor("#5e594f"), 0.8));
+    painter.setBrush(bezel);
+    painter.drawRoundedRect(housing, 4.0, 4.0);
+
+    const QString primary = mounted_
+                                ? QString::number(primary_).rightJustified(
+                                      kind_ == Kind::kHardDisk ? 5 : 2, '0')
+                                : QString(kind_ == Kind::kHardDisk ? 5 : 2,
+                                          '-');
+    const QString secondary = mounted_ ? QString::number(secondary_) : "-";
+    constexpr qreal kDigitWidth = 14.0;
+    constexpr qreal kDigitGap = 1.5;
+    const qreal primary_label_width = 20.0;
+    const qreal secondary_label_width = 22.0;
+    const qreal group_gap = kind_ == Kind::kFloppy ? 5.0 : 0.0;
+    const qreal content_width =
+        primary_label_width + primary.size() * kDigitWidth +
+        static_cast<qreal>(primary.size() - 1) * kDigitGap + group_gap +
+        (kind_ == Kind::kFloppy
+             ? secondary_label_width + secondary.size() * kDigitWidth +
+                   static_cast<qreal>(secondary.size() - 1) * kDigitGap
+             : 0.0);
+    qreal x = (width() - content_width) / 2.0;
+    QFont legend = font();
+    legend.setBold(true);
+    legend.setPointSizeF(6.0);
+    painter.setFont(legend);
+    painter.setPen(QColor("#d8cda8"));
+
+    const auto draw_legend = [&painter, &x](const QString& text, qreal width) {
+      painter.drawText(QRectF(x, 5.0, width, 22.0), Qt::AlignCenter, text);
+      x += width;
+    };
+    const auto draw_digits = [&](const QString& digits) {
+      for (qsizetype index = 0; index < digits.size(); ++index) {
+        draw_digit_drum(&painter, QRectF(x, 4.0, kDigitWidth, 24.0),
+                        digits[index]);
+        x += kDigitWidth;
+        if (index + 1 < digits.size()) {
+          x += kDigitGap;
+        }
+      }
+    };
+
+    draw_legend(kind_ == Kind::kHardDisk ? "BLK" : "TRK",
+                primary_label_width);
+    draw_digits(primary);
+    if (kind_ == Kind::kFloppy) {
+      x += group_gap;
+      draw_legend("SIDE", secondary_label_width);
+      draw_digits(secondary);
+    }
+  }
+
+ private:
+  static void draw_digit_drum(QPainter* painter, const QRectF& drum,
+                              QChar digit) {
+    painter->save();
+    painter->setClipRect(drum);
+    QLinearGradient paper(drum.topLeft(), drum.bottomLeft());
+    paper.setColorAt(0.0, QColor("#8f876d"));
+    paper.setColorAt(0.16, QColor("#d8cfaa"));
+    paper.setColorAt(0.50, QColor("#f2e9c8"));
+    paper.setColorAt(0.84, QColor("#c8be99"));
+    paper.setColorAt(1.0, QColor("#766f5a"));
+    painter->setPen(QPen(QColor("#171713"), 0.7));
+    painter->setBrush(paper);
+    painter->drawRect(drum);
+    QFont digits = painter->font();
+    digits.setStyleHint(QFont::Monospace);
+    digits.setFixedPitch(true);
+    digits.setBold(true);
+    digits.setPointSizeF(12.0);
+    painter->setFont(digits);
+    painter->setPen(QColor("#191914"));
+    painter->drawText(drum.adjusted(0.0, -0.5, 0.0, 0.0), Qt::AlignCenter,
+                      QString(digit));
+    painter->setPen(QPen(QColor(255, 255, 235, 80), 0.7));
+    painter->drawLine(drum.left(), drum.center().y() - 5.5, drum.right(),
+                      drum.center().y() - 5.5);
+    painter->setPen(QPen(QColor(50, 46, 37, 90), 0.7));
+    painter->drawLine(drum.left(), drum.center().y() + 6.0, drum.right(),
+                      drum.center().y() + 6.0);
+    painter->restore();
+  }
+
+  Kind kind_;
+  bool mounted_ = false;
+  std::size_t primary_ = 0;
+  unsigned secondary_ = 0;
+};
+
 namespace {
 
 struct DisplayResolution {
@@ -314,6 +530,16 @@ QString compact_filename(const std::filesystem::path& path) {
     return filename;
   }
   return filename.left(16) + QChar(0x2026) + filename.right(17);
+}
+
+/** Recolors a monochrome resource icon to suit the instrument-panel finish. */
+QPixmap tinted_icon(const QString& resource, const QSize& size,
+                    const QColor& color) {
+  QPixmap pixmap = QIcon(resource).pixmap(size);
+  QPainter painter(&pixmap);
+  painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+  painter.fillRect(pixmap.rect(), color);
+  return pixmap;
 }
 
 /** Escapes menu mnemonic markers present in a mounted filename. */
@@ -419,12 +645,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* drive_panel = new QFrame(central);
   drive_panel->setObjectName("driveActivityPanel");
   drive_panel->setFrameShape(QFrame::StyledPanel);
-  drive_panel->setMinimumWidth(205);
-  drive_panel->setMaximumWidth(235);
+  drive_panel->setMinimumWidth(225);
+  drive_panel->setMaximumWidth(255);
   drive_panel_layout_ = new QVBoxLayout(drive_panel);
   drive_panel_layout_->setContentsMargins(12, 12, 12, 12);
   drive_panel_layout_->setSpacing(8);
   auto* panel_title = new QLabel("DRIVE STATUS", drive_panel);
+  panel_title->setObjectName("drivePanelTitle");
   QFont panel_font = panel_title->font();
   panel_font.setBold(true);
   panel_font.setLetterSpacing(QFont::AbsoluteSpacing, 1.2);
@@ -454,6 +681,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         if (led != nullptr) {
           led->pulse(activity.operation, activity.duration_ms);
+        }
+        if (activity.drive < 2) {
+          refresh_drive_position(
+              activity.device == P2000cMachine::StorageDevice::kHardDisk,
+              activity.drive);
         }
         if (audio_enabled_) {
           hardware_audio_->play_storage_activity(activity);
@@ -588,14 +820,16 @@ void MainWindow::create_menus() {
   auto add_drive_card = [this](const QString& title,
                                const QString& status_object_name,
                                const QString& icon_resource,
-                               QLabel** status, DriveLed** led) {
+                               QLabel** status, MediaSourceBadge** source,
+                               DrivePositionDisplay** position,
+                               DriveLed** led, bool hard_disk) {
     auto* card = new QFrame(this);
     card->setObjectName(QString(status_object_name).replace("Status", "Card"));
     card->setFrameShape(QFrame::NoFrame);
-    card->setStyleSheet("QFrame { background: transparent; border: none; }");
+    card->setProperty("driveCard", true);
     auto* card_layout = new QHBoxLayout(card);
-    card_layout->setContentsMargins(2, 5, 2, 5);
-    card_layout->setSpacing(7);
+    card_layout->setContentsMargins(2, 6, 2, 7);
+    card_layout->setSpacing(6);
     *led = new DriveLed(card);
     (*led)->setObjectName(
         QString(status_object_name).replace("Status", "ActivityLed"));
@@ -603,23 +837,49 @@ void MainWindow::create_menus() {
     auto* icon = new QLabel(card);
     icon->setObjectName(
         QString(status_object_name).replace("Status", "TypeIcon"));
-    icon->setPixmap(QIcon(icon_resource).pixmap(QSize(25, 29)));
-    icon->setFixedSize(27, 31);
+    icon->setProperty("driveTypeIcon", true);
+    icon->setPixmap(
+        tinted_icon(icon_resource, QSize(21, 25), QColor("#cdbd83")));
+    icon->setFixedSize(29, 33);
     icon->setAlignment(Qt::AlignCenter);
     icon->setToolTip(title);
     card_layout->addWidget(icon, 0, Qt::AlignTop);
     auto* text_layout = new QVBoxLayout();
-    text_layout->setSpacing(1);
+    text_layout->setSpacing(2);
+    auto* heading_layout = new QHBoxLayout();
+    heading_layout->setContentsMargins(0, 0, 0, 0);
+    heading_layout->setSpacing(5);
     auto* heading = new QLabel(title, card);
+    heading->setProperty("driveHeading", true);
     QFont heading_font = heading->font();
     heading_font.setBold(true);
+    heading_font.setLetterSpacing(QFont::AbsoluteSpacing, 0.35);
     heading->setFont(heading_font);
-    text_layout->addWidget(heading);
+    heading_layout->addWidget(heading);
+    heading_layout->addStretch(1);
+    *source = new MediaSourceBadge(card);
+    (*source)->setObjectName(
+        QString(status_object_name).replace("Status", "Source"));
+    heading_layout->addWidget(*source, 0, Qt::AlignVCenter);
+    text_layout->addLayout(heading_layout);
     *status = new QLabel("Empty", card);
     (*status)->setObjectName(status_object_name);
-    (*status)->setWordWrap(true);
-    (*status)->setStyleSheet("color: #5f6b5d; border: none;");
+    (*status)->setProperty("mediaFilename", true);
+    (*status)->setWordWrap(false);
+    QFont filename_font = (*status)->font();
+    filename_font.setStyleHint(QFont::Monospace);
+    filename_font.setFixedPitch(true);
+    filename_font.setPointSizeF(
+        std::max(7.0, filename_font.pointSizeF() - 1.0));
+    (*status)->setFont(filename_font);
     text_layout->addWidget(*status);
+    *position = new DrivePositionDisplay(
+        hard_disk ? DrivePositionDisplay::Kind::kHardDisk
+                  : DrivePositionDisplay::Kind::kFloppy,
+        card);
+    (*position)->setObjectName(
+        QString(status_object_name).replace("Status", "Position"));
+    text_layout->addWidget(*position);
     card_layout->addLayout(text_layout, 1);
     drive_panel_layout_->addWidget(card);
   };
@@ -632,6 +892,7 @@ void MainWindow::create_menus() {
     machine_.reset();
     pending_t_states_ = 0.0;
     execution_timer_.restart();
+    refresh_media_indicators();
     refresh_screen();
   });
   QMenu* speed_menu = machine_menu->addMenu("Emulation &Speed");
@@ -739,7 +1000,9 @@ void MainWindow::create_menus() {
                    QString("floppyDrive%1Status").arg(drive_letter),
                    ":/icons/floppy-disk.svg",
                    &media_status_labels_[drive],
-                   &floppy_activity_leds_[drive]);
+                   &media_source_badges_[drive],
+                   &floppy_position_displays_[drive],
+                   &floppy_activity_leds_[drive], false);
   }
 
   media_menu->addSeparator();
@@ -787,7 +1050,9 @@ void MainWindow::create_menus() {
                    QString("hardDisk%1Status").arg(drive + 1),
                    ":/icons/hard-drive.svg",
                    &hard_disk_status_labels_[drive],
-                   &hard_disk_activity_leds_[drive]);
+                   &hard_disk_source_badges_[drive],
+                   &hard_disk_position_displays_[drive],
+                   &hard_disk_activity_leds_[drive], true);
   }
 
   QMenu* view_menu = menuBar()->addMenu("&View");
@@ -941,6 +1206,7 @@ void MainWindow::load_ipl_rom() {
     return;
   }
   statusBar()->showMessage("IPL ROM loaded: " + path);
+  refresh_media_indicators();
   refresh_screen();
 }
 
@@ -1020,6 +1286,51 @@ void MainWindow::save_hard_disk_as(std::size_t drive) {
   }
 }
 
+void MainWindow::refresh_drive_position(bool hard_disk, std::size_t drive) {
+  if (drive >= 2) {
+    return;
+  }
+  DrivePositionDisplay* display =
+      hard_disk ? hard_disk_position_displays_[drive]
+                : floppy_position_displays_[drive];
+  if (display == nullptr) {
+    return;
+  }
+  const bool mounted = hard_disk
+                           ? machine_.hard_disk(drive).has_value()
+                           : (drive == 0 ? machine_.floppy_a().has_value()
+                                         : machine_.floppy_b().has_value());
+  if (!mounted) {
+    if (hard_disk) {
+      display->set_hard_disk_position(0, false);
+    } else {
+      display->set_floppy_position(0, 0, false);
+    }
+    display->setToolTip("No media position is available.");
+    return;
+  }
+  if (hard_disk) {
+    const std::size_t block = machine_.hard_disk_block(drive);
+    const std::size_t final_block =
+        RawDiskImage::kHardDiskSize / RawDiskImage::kSectorSize - 1;
+    display->set_hard_disk_position(block, true);
+    display->setToolTip(
+        QString("Last SASI block accessed: %1 of %2")
+            .arg(block)
+            .arg(final_block));
+  } else {
+    const unsigned track = machine_.floppy_track(drive);
+    const unsigned side = machine_.floppy_side(drive);
+    display->set_floppy_position(track, side, true);
+    display->setToolTip(
+        QString("Current floppy position: track %1 of %2, side %3 of %4")
+            .arg(track)
+            .arg(RawDiskImage::kFloppyCylinders - 1)
+            .arg(side)
+            .arg(RawDiskImage::kFloppyHeads - 1));
+  }
+}
+
 void MainWindow::refresh_media_indicators() {
   for (std::size_t drive = 0; drive < 2; ++drive) {
     const QChar drive_letter = drive == 0 ? 'A' : 'B';
@@ -1036,6 +1347,8 @@ void MainWindow::refresh_media_indicators() {
           QString("Drive %1: empty").arg(drive_letter));
       media_status_labels_[drive]->setToolTip(
           QString("No image is mounted in floppy drive %1.").arg(drive_letter));
+      media_source_badges_[drive]->hide();
+      refresh_drive_position(false, drive);
       bundled_system_actions_[drive]->setChecked(false);
       bundled_zork_actions_[drive]->setChecked(false);
       bundled_chess_actions_[drive]->setChecked(false);
@@ -1053,7 +1366,8 @@ void MainWindow::refresh_media_indicators() {
     const QString tooltip =
         QString("Drive %1 — %2 raw FLP image\n%3")
             .arg(drive_letter)
-            .arg(temporary ? "temporary writable copy" : "persistent writable")
+            .arg(temporary ? "writable session copy of bundled template"
+                           : "persistent writable image")
             .arg(full_path);
     media_drive_menus_[drive]->setTitle(
         QString("Drive &%1 — %2").arg(drive_letter).arg(menu_safe(filename)));
@@ -1061,9 +1375,11 @@ void MainWindow::refresh_media_indicators() {
     current_media_actions_[drive]->setChecked(true);
     current_media_actions_[drive]->setToolTip(tooltip);
     current_media_actions_[drive]->setStatusTip(full_path);
-    media_status_labels_[drive]->setText(
-        QString("%1%2").arg(filename).arg(temporary ? "\nTEMPORARY" : ""));
+    media_status_labels_[drive]->setText(filename);
     media_status_labels_[drive]->setToolTip(tooltip);
+    media_source_badges_[drive]->set_template_copy(temporary);
+    media_source_badges_[drive]->show();
+    refresh_drive_position(false, drive);
 
     const QString& system_path = bundled_system_paths_[drive];
     const QString& zork_path = bundled_zork_paths_[drive];
@@ -1100,6 +1416,8 @@ void MainWindow::refresh_media_indicators() {
       hard_disk_status_labels_[drive]->setText(volumes + ": empty");
       hard_disk_status_labels_[drive]->setToolTip(
           QString("No image is mounted for CP/M volumes %1.").arg(volumes));
+      hard_disk_source_badges_[drive]->hide();
+      refresh_drive_position(true, drive);
       bundled_hard_disk_actions_[drive]->setChecked(false);
       continue;
     }
@@ -1113,7 +1431,8 @@ void MainWindow::refresh_media_indicators() {
     const QString tooltip =
         QString("CP/M volumes %1 — %2 10 MiB raw HDA image\n%3")
             .arg(volumes)
-            .arg(temporary ? "temporary writable copy" : "persistent writable")
+            .arg(temporary ? "writable session copy of bundled template"
+                           : "persistent writable image")
             .arg(full_path);
     hard_disk_menus_[drive]->setTitle(
         QString("Hard disk &%1 (%2) — %3")
@@ -1125,9 +1444,11 @@ void MainWindow::refresh_media_indicators() {
     current_hard_disk_actions_[drive]->setChecked(true);
     current_hard_disk_actions_[drive]->setToolTip(tooltip);
     current_hard_disk_actions_[drive]->setStatusTip(full_path);
-    hard_disk_status_labels_[drive]->setText(
-        filename + (temporary ? "\nTEMPORARY" : ""));
+    hard_disk_status_labels_[drive]->setText(filename);
     hard_disk_status_labels_[drive]->setToolTip(tooltip);
+    hard_disk_source_badges_[drive]->set_template_copy(temporary);
+    hard_disk_source_badges_[drive]->show();
+    refresh_drive_position(true, drive);
     bundled_hard_disk_actions_[drive]->setChecked(
         temporary && QFileInfo(full_path).absoluteFilePath() ==
                          QFileInfo(temporary_hard_disk_paths_[drive])
@@ -1154,12 +1475,13 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
       machine_.reset();
       pending_t_states_ = 0.0;
       execution_timer_.restart();
+      refresh_media_indicators();
       refresh_screen();
     }
     statusBar()->showMessage(
         QString(
-            "Pristine CP/M 2.2 template mounted in drive %1 as a temporary "
-            "writable copy.")
+            "Pristine CP/M 2.2 template mounted in drive %1 as a writable "
+            "session copy.")
             .arg(drive_letter));
   }
 }
@@ -1241,8 +1563,8 @@ void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
     bundled_blank_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
-        QString("Blank 640 KiB template mounted in drive %1 as a temporary "
-                "writable copy.")
+        QString("Blank 640 KiB template mounted in drive %1 as a writable "
+                "session copy.")
             .arg(drive_letter));
   }
 }
@@ -1261,7 +1583,8 @@ void MainWindow::mount_bundled_hard_disk(std::size_t drive) {
     temporary_hard_disk_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
-        QString("Pristine blank hard-disk template %1 mounted temporarily.")
+        QString("Pristine blank hard-disk template %1 mounted as a writable "
+                "session copy.")
             .arg(drive + 1));
   }
 }

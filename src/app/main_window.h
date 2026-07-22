@@ -22,7 +22,9 @@ namespace p2000c {
 
 class DisplayWidget;
 class DriveLed;
+class DrivePositionDisplay;
 class HardwareAudio;
+class MediaSourceBadge;
 
 /** Main window for the minimal Qt P2000C emulator shell. */
 class MainWindow : public QMainWindow {
@@ -72,6 +74,9 @@ class MainWindow : public QMainWindow {
 
     /** Refreshes the Media menu and persistent drive-status indicators. */
     void refresh_media_indicators();
+
+    /** Refreshes one live floppy-track or hard-disk-block readout. */
+    void refresh_drive_position(bool hard_disk, std::size_t drive);
 
     /** Mounts a disposable copy of the pristine CP/M system template. */
     void mount_bundled_system_floppy(std::size_t drive);
@@ -133,6 +138,8 @@ class MainWindow : public QMainWindow {
     std::array<QString, 2> bundled_ipldump_paths_{};
     std::array<QString, 2> bundled_blank_paths_{};
     std::array<QLabel*, 2> media_status_labels_{};
+    std::array<MediaSourceBadge*, 2> media_source_badges_{};
+    std::array<DrivePositionDisplay*, 2> floppy_position_displays_{};
     std::array<DriveLed*, 2> floppy_activity_leds_{};
     std::array<QMenu*, 2> hard_disk_menus_{};
     std::array<QAction*, 2> current_hard_disk_actions_{};
@@ -140,6 +147,8 @@ class MainWindow : public QMainWindow {
     std::array<QAction*, 2> save_hard_disk_actions_{};
     std::array<QMenu*, 2> recent_hard_disk_menus_{};
     std::array<QLabel*, 2> hard_disk_status_labels_{};
+    std::array<MediaSourceBadge*, 2> hard_disk_source_badges_{};
+    std::array<DrivePositionDisplay*, 2> hard_disk_position_displays_{};
     std::array<DriveLed*, 2> hard_disk_activity_leds_{};
     std::array<QString, 2> temporary_floppy_paths_{};
     std::array<QString, 2> temporary_hard_disk_paths_{};

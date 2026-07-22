@@ -778,6 +778,9 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   auto* drive_a_status = window.findChild<QLabel*>("floppyDriveAStatus");
+  auto* drive_a_source = window.findChild<QWidget*>("floppyDriveASource");
+  auto* drive_a_position =
+      window.findChild<QWidget*>("floppyDriveAPosition");
   auto* drive_a_menu = window.findChild<QMenu*>("floppyDriveAMenu");
   auto* drive_panel = window.findChild<QWidget*>("driveActivityPanel");
   auto* drive_a_led = window.findChild<QWidget*>("floppyDriveAActivityLed");
@@ -789,11 +792,15 @@ int main(int argc, char* argv[]) {
   if (drive_a_led != nullptr) {
     drive_a_led->render(&idle_led);
   }
-  if (drive_a_status == nullptr || drive_a_menu == nullptr ||
+  if (drive_a_status == nullptr || drive_a_source == nullptr ||
+      drive_a_position == nullptr || drive_a_menu == nullptr ||
       drive_a_current == nullptr || drive_panel == nullptr ||
       drive_a_led == nullptr || drive_a_icon == nullptr ||
       drive_a_icon->pixmap().isNull() || drive_a_card == nullptr ||
       drive_a_card->frameShape() != QFrame::NoFrame ||
+      !drive_a_card->property("driveCard").toBool() ||
+      !drive_a_icon->property("driveTypeIcon").toBool() ||
+      !drive_a_status->property("mediaFilename").toBool() ||
       window.palette().color(QPalette::Window) != QColor("#e8dcb3") ||
       !qApp->styleSheet().contains(
           "QFrame#driveActivityPanel {\n      background: #f5eac6;") ||
@@ -801,7 +808,10 @@ int main(int argc, char* argv[]) {
       qGray(idle_led.pixel(9, 8)) <= qGray(idle_led.pixel(12, 12)) ||
       idle_led.pixelColor(12, 12) == idle_led.pixelColor(0, 0) ||
       !drive_a_status->text().contains("system_drive_a.flp") ||
-      !drive_a_status->text().contains("TEMPORARY") ||
+      !drive_a_source->accessibleName().contains("bundled template") ||
+      !drive_a_source->toolTip().contains("template remains pristine") ||
+      !drive_a_position->accessibleName().contains("Track") ||
+      !drive_a_position->accessibleName().contains("side") ||
       !drive_a_status->toolTip().contains(system_path) ||
       !drive_a_menu->title().contains("system_drive_a.flp") ||
       !drive_a_current->isChecked() || !system->isChecked()) {
@@ -896,14 +906,21 @@ int main(int argc, char* argv[]) {
   for (int drive = 1; drive <= 2; ++drive) {
     auto* status =
         window.findChild<QLabel*>(QString("hardDisk%1Status").arg(drive));
+    auto* source =
+        window.findChild<QWidget*>(QString("hardDisk%1Source").arg(drive));
+    auto* position =
+        window.findChild<QWidget*>(QString("hardDisk%1Position").arg(drive));
     auto* current = window.findChild<QAction*>(
         QString("currentHardDisk%1Action").arg(drive));
     auto* bundled = window.findChild<QAction*>(
         QString("mountDefaultHardDisk%1Action").arg(drive));
     const QString filename = QString("hard_disk_%1.hda").arg(drive);
-    if (status == nullptr || current == nullptr || bundled == nullptr ||
+    if (status == nullptr || source == nullptr || position == nullptr ||
+        current == nullptr || bundled == nullptr ||
         !status->text().contains(filename) || !current->isChecked() ||
-        !status->text().contains("TEMPORARY") || !bundled->isChecked() ||
+        !source->accessibleName().contains("bundled template") ||
+        !position->accessibleName().startsWith("SASI block ") ||
+        !bundled->isChecked() ||
         !validate_image(current->statusTip(),
                         p2000c::RawDiskImage::Kind::kHardDisk)) {
       std::cerr << "Default SASI hard-disk working image was not mounted.\n";

@@ -108,6 +108,21 @@ class P2000cMachine {
       return hard_disks_.at(drive);
     }
 
+    /** Returns the cylinder most recently selected in a floppy drive. */
+    std::uint8_t floppy_track(std::size_t drive) const {
+      return fdc_tracks_.at(drive);
+    }
+
+    /** Returns the side most recently accessed in a floppy drive. */
+    std::uint8_t floppy_side(std::size_t drive) const {
+      return fdc_sides_.at(drive);
+    }
+
+    /** Returns the final SASI block touched by the most recent transfer. */
+    std::size_t hard_disk_block(std::size_t drive) const {
+      return sasi_blocks_.at(drive);
+    }
+
     /** Returns the high-level serial terminal. */
     const Terminal& terminal() const { return terminal_; }
 
@@ -259,11 +274,13 @@ class P2000cMachine {
     std::uint8_t fdc_output_ = 0;
     std::uint8_t fdc_sense_status_ = 0xc0;
     std::array<std::uint8_t, 2> fdc_tracks_{};
+    std::array<std::uint8_t, 2> fdc_sides_{};
     std::uint8_t fdc_sense_track_ = 0;
     SasiPhase sasi_phase_ = SasiPhase::kBusFree;
     std::array<std::uint8_t, 6> sasi_command_{};
     std::size_t sasi_command_length_ = 0;
     std::uint8_t sasi_status_ = 0;
+    std::array<std::size_t, 2> sasi_blocks_{};
     std::uint8_t sio_b_register_ = 0;
     std::uint8_t sio_b_receive_byte_ = 0;
     bool sio_b_receive_ready_ = false;
