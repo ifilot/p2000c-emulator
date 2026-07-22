@@ -20,6 +20,22 @@ Choose the package for your platform:
 | Linux | x86-64 | [Portable AppImage (`linux-x86_64.AppImage`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
 | Linux | x86-64 | [Graphical installer (`linux-x86_64.run`)](https://github.com/ifilot/p2000c-emulator/releases/latest) |
 
+### Updating an existing installation
+
+The current graphical installers are fully offline and do not support in-place
+updates. To install a newer version:
+
+1. Close P2000C Emulator.
+2. Uninstall the existing version using your operating system's application
+   manager or the P2000C Emulator Maintenance Tool.
+3. Download and install the latest release.
+
+Application preferences are stored separately from the installation directory
+and are preserved. Keep personal disk images and other files outside the
+application installation directory, because that directory is removed during
+uninstallation. AppImage users can simply replace the old AppImage with the new
+one.
+
 ## Features
 
 - Boots CP/M and runs original P2000C software
