@@ -7,6 +7,9 @@
 #include <QWidget>
 #include <functional>
 
+#include "app/display_widget.h"
+
+class QCheckBox;
 class QLabel;
 class QSlider;
 
@@ -40,25 +43,36 @@ class ScreenColorWheel : public QWidget {
     std::function<void(const QColor&)> color_changed_handler_;
 };
 
-/** Modal settings panel for choosing and previewing the CRT phosphor color. */
+/** Modal settings panel for previewing phosphor color and CRT effects. */
 class ScreenColorDialog : public QDialog {
   public:
     explicit ScreenColorDialog(const QColor& initial_color,
+                               const CrtEffects& initial_effects,
                                QWidget* parent = nullptr);
 
     QColor selected_color() const { return selected_color_; }
-    void set_preview_handler(std::function<void(const QColor&)> handler);
+    const CrtEffects& selected_effects() const { return selected_effects_; }
+    void set_preview_handler(
+        std::function<void(const QColor&, const CrtEffects&)> handler);
 
   private:
     void select_color(const QColor& color);
+    void select_effects(const CrtEffects& effects);
     void update_preview();
 
     ScreenColorWheel* wheel_ = nullptr;
     QSlider* brightness_ = nullptr;
     QLabel* swatch_ = nullptr;
     QLabel* value_label_ = nullptr;
+    QCheckBox* scanlines_ = nullptr;
+    QCheckBox* bloom_ = nullptr;
+    QCheckBox* persistence_ = nullptr;
+    QCheckBox* curvature_ = nullptr;
+    QCheckBox* vignette_ = nullptr;
+    QCheckBox* noise_ = nullptr;
     QColor selected_color_;
-    std::function<void(const QColor&)> preview_handler_;
+    CrtEffects selected_effects_;
+    std::function<void(const QColor&, const CrtEffects&)> preview_handler_;
 };
 
 }  // namespace p2000c

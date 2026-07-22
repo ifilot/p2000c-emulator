@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QColor>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -68,6 +69,11 @@ bool validate_attribute_rendering() {
   p2000c::DisplayWidget display;
   display.setFixedSize(560, 288);
   display.set_cursor(0, 0, false);
+  p2000c::CrtEffects effects = p2000c::DisplayWidget::default_crt_effects();
+  effects.persistence = false;
+  effects.curvature = false;
+  effects.vignette = false;
+  display.set_crt_effects(effects);
 
   p2000c::Terminal::Screen screen;
   screen.fill(0x20);
@@ -120,8 +126,8 @@ bool validate_graphics_rendering() {
   };
   auto area_energy = [](const QImage& image, int center_x, int center_y) {
     int energy = 0;
-    for (int y = center_y - 3; y <= center_y + 3; ++y) {
-      for (int x = center_x - 3; x <= center_x + 3; ++x) {
+    for (int y = center_y - 1; y <= center_y + 1; ++y) {
+      for (int x = center_x - 1; x <= center_x + 1; ++x) {
         energy += qGreen(image.pixel(x, y));
       }
     }
@@ -131,6 +137,11 @@ bool validate_graphics_rendering() {
     p2000c::DisplayWidget display;
     display.setFixedSize(560, 288);
     display.set_cursor(0, 0, false);
+    p2000c::CrtEffects effects = p2000c::DisplayWidget::default_crt_effects();
+    effects.persistence = false;
+    effects.curvature = false;
+    effects.vignette = false;
+    display.set_crt_effects(effects);
     display.set_screen(terminal.screen(), terminal.attributes(),
                        terminal.graphics_mode(), terminal.graphic_screen());
     QImage image(display.size(), QImage::Format_ARGB32);
@@ -167,6 +178,89 @@ bool validate_graphics_rendering() {
   return true;
 }
 
+/** Checks that scanline separation and temporal persistence are effective. */
+bool validate_crt_effect_rendering() {
+  p2000c::Terminal::Screen lit_screen;
+  lit_screen.fill(0x20);
+  p2000c::Terminal::AttributeScreen lit_attributes;
+  lit_attributes.fill(p2000c::Terminal::kAttributeInverse |
+                      p2000c::Terminal::kAttributeIntensityHigh);
+  auto render = [&](const p2000c::CrtEffects& effects) {
+    p2000c::DisplayWidget display;
+    display.setFixedSize(1120, 576);
+    display.set_cursor(0, 0, false);
+    display.set_crt_effects(effects);
+    display.set_screen(lit_screen, lit_attributes);
+    QImage image(display.size(), QImage::Format_ARGB32);
+    image.fill(Qt::black);
+    display.render(&image);
+    return image;
+  };
+  auto image_energy = [](const QImage& image) {
+    std::uint64_t energy = 0;
+    for (int y = 0; y < image.height(); ++y) {
+      for (int x = 0; x < image.width(); ++x) {
+        energy += qGreen(image.pixel(x, y));
+      }
+    }
+    return energy;
+  };
+
+  const p2000c::CrtEffects plain = {false, false, false,
+                                    false, false, false};
+  p2000c::CrtEffects scanlines = plain;
+  scanlines.scanlines = true;
+  const std::uint64_t plain_energy = image_energy(render(plain));
+  const QImage scanline_image = render(scanlines);
+  const std::uint64_t scanline_energy = image_energy(scanline_image);
+  if (scanline_energy * 100 >= plain_energy * 94) {
+    std::cerr << "Scanline separation did not materially shape the raster: "
+              << scanline_energy << " vs " << plain_energy << ".\n";
+    return false;
+  }
+
+  p2000c::DisplayWidget persistent_display;
+  persistent_display.setFixedSize(560, 288);
+  persistent_display.set_cursor(0, 0, false);
+  p2000c::CrtEffects persistence = plain;
+  persistence.persistence = true;
+  persistent_display.set_crt_effects(persistence);
+  p2000c::Terminal::Screen sparse_screen;
+  sparse_screen.fill(0x20);
+  p2000c::Terminal::AttributeScreen sparse_attributes;
+  sparse_attributes.fill(p2000c::Terminal::kDefaultAttribute);
+  constexpr int kCell = 10 * 80 + 40;
+  sparse_attributes[kCell] = p2000c::Terminal::kAttributeInverse |
+                             p2000c::Terminal::kAttributeIntensityHigh;
+  persistent_display.set_screen(sparse_screen, sparse_attributes);
+  QImage first(persistent_display.size(), QImage::Format_ARGB32);
+  first.fill(Qt::black);
+  persistent_display.render(&first);
+  sparse_attributes[kCell] = p2000c::Terminal::kDefaultAttribute;
+  persistent_display.set_screen(sparse_screen, sparse_attributes);
+  QImage afterglow(persistent_display.size(), QImage::Format_ARGB32);
+  afterglow.fill(Qt::black);
+  persistent_display.render(&afterglow);
+  persistent_display.set_crt_effects(plain);
+  QImage cleared(persistent_display.size(), QImage::Format_ARGB32);
+  cleared.fill(Qt::black);
+  persistent_display.render(&cleared);
+  auto cell_energy = [](const QImage& image) {
+    std::uint64_t energy = 0;
+    for (int y = 120; y < 132; ++y) {
+      for (int x = 280; x < 287; ++x) {
+        energy += qGreen(image.pixel(x, y));
+      }
+    }
+    return energy;
+  };
+  if (cell_energy(afterglow) <= cell_energy(cleared) * 2) {
+    std::cerr << "Phosphor persistence did not retain extinguished pixels.\n";
+    return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -179,7 +273,8 @@ int main(int argc, char* argv[]) {
   QApplication::setApplicationName("P2000C Emulator UI Test");
   QApplication::setOrganizationName("P2000C Emulator Project");
 
-  if (!validate_attribute_rendering() || !validate_graphics_rendering()) {
+  if (!validate_attribute_rendering() || !validate_graphics_rendering() ||
+      !validate_crt_effect_rendering()) {
     return 1;
   }
 
@@ -187,26 +282,44 @@ int main(int argc, char* argv[]) {
   settings.clear();
   const QColor saved_color(74, 122, 255);
   settings.setValue("display/baseColor", saved_color);
+  settings.setValue("display/effects/scanlines", false);
+  settings.setValue("display/effects/bloom", false);
+  settings.setValue("display/effects/persistence", false);
+  settings.setValue("display/effects/curvature", false);
+  settings.setValue("display/effects/vignette", false);
+  settings.setValue("display/effects/noise", true);
 
   p2000c::MainWindow window;
   auto* display = window.findChild<p2000c::DisplayWidget*>();
   QAction* resolution = find_action(&window, "840 x 432");
-  QAction* screen_color = find_action(&window, "Screen &Color...");
+  QAction* screen_color = find_action(&window, "Screen &Appearance...");
   if (display == nullptr || resolution == nullptr || screen_color == nullptr) {
     return 1;
   }
-  if (display->base_color() != saved_color) {
-    std::cerr << "Saved screen color was not restored.\n";
+  const p2000c::CrtEffects saved_effects = display->crt_effects();
+  if (display->base_color() != saved_color || saved_effects.scanlines ||
+      saved_effects.bloom || saved_effects.persistence ||
+      saved_effects.curvature || saved_effects.vignette ||
+      !saved_effects.noise) {
+    std::cerr << "Saved screen appearance was not restored.\n";
     return 1;
   }
 
   QTimer::singleShot(0, []() {
     auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+    auto* scanlines =
+        dialog != nullptr
+            ? dialog->findChild<QCheckBox*>("screenScanlinesCheckBox")
+            : nullptr;
+    auto* noise =
+        dialog != nullptr
+            ? dialog->findChild<QCheckBox*>("screenNoiseCheckBox")
+            : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("screenColorButtons")
             : nullptr;
-    if (buttons == nullptr) {
+    if (buttons == nullptr || scanlines == nullptr || noise == nullptr) {
       if (dialog != nullptr) {
         dialog->reject();
       }
@@ -217,17 +330,25 @@ int main(int argc, char* argv[]) {
   });
   screen_color->trigger();
   const QColor default_color = p2000c::DisplayWidget::default_base_color();
+  const p2000c::CrtEffects default_effects =
+      p2000c::DisplayWidget::default_crt_effects();
   if (display->base_color() != default_color ||
-      settings.value("display/baseColor").value<QColor>() != default_color) {
-    std::cerr << "Accepted screen color was not applied and persisted.\n";
+      display->crt_effects() != default_effects ||
+      settings.value("display/baseColor").value<QColor>() != default_color ||
+      settings.value("display/effects/scanlines").toBool() !=
+          default_effects.scanlines ||
+      settings.value("display/effects/noise").toBool() !=
+          default_effects.noise) {
+    std::cerr << "Accepted screen appearance was not applied and persisted.\n";
     return 1;
   }
 
   p2000c::MainWindow restored_window;
   auto* restored_display = restored_window.findChild<p2000c::DisplayWidget*>();
   if (restored_display == nullptr ||
-      restored_display->base_color() != default_color) {
-    std::cerr << "Screen color did not survive a new window session.\n";
+      restored_display->base_color() != default_color ||
+      restored_display->crt_effects() != default_effects) {
+    std::cerr << "Screen appearance did not survive a new window session.\n";
     return 1;
   }
 
@@ -236,12 +357,19 @@ int main(int argc, char* argv[]) {
     auto* slider = dialog != nullptr
                        ? dialog->findChild<QSlider*>("screenBrightnessSlider")
                        : nullptr;
+    auto* scanlines =
+        dialog != nullptr
+            ? dialog->findChild<QCheckBox*>("screenScanlinesCheckBox")
+            : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("screenColorButtons")
             : nullptr;
     if (slider != nullptr) {
       slider->setValue(35);
+    }
+    if (scanlines != nullptr) {
+      scanlines->setChecked(false);
     }
     if (buttons != nullptr) {
       buttons->button(QDialogButtonBox::Cancel)->click();
@@ -251,8 +379,11 @@ int main(int argc, char* argv[]) {
   });
   screen_color->trigger();
   if (display->base_color() != default_color ||
-      settings.value("display/baseColor").value<QColor>() != default_color) {
-    std::cerr << "Cancel did not restore the prior screen color.\n";
+      display->crt_effects() != default_effects ||
+      settings.value("display/baseColor").value<QColor>() != default_color ||
+      settings.value("display/effects/scanlines").toBool() !=
+          default_effects.scanlines) {
+    std::cerr << "Cancel did not restore the prior screen appearance.\n";
     return 1;
   }
 

@@ -1,6 +1,7 @@
 #include "app/display_widget.h"
 
 #include <QKeyEvent>
+#include <QLinearGradient>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QRadialGradient>
@@ -69,15 +70,24 @@ DisplayWidget::DisplayWidget(QWidget* parent)
   auto* cursor_timer = new QTimer(this);
   connect(cursor_timer, &QTimer::timeout, this, [this]() {
     cursor_phase_ = !cursor_phase_;
+    invalidate_emission();
     update();
   });
   cursor_timer->start(500);
   auto* attribute_blink_timer = new QTimer(this);
   connect(attribute_blink_timer, &QTimer::timeout, this, [this]() {
     attribute_blink_phase_ = !attribute_blink_phase_;
+    invalidate_emission();
     update();
   });
   attribute_blink_timer->start(667);
+  effect_timer_ = new QTimer(this);
+  effect_timer_->setTimerType(Qt::PreciseTimer);
+  connect(effect_timer_, &QTimer::timeout, this, [this]() {
+    ++noise_phase_;
+    update();
+  });
+  update_effect_timer();
   clear();
 }
 
@@ -89,6 +99,17 @@ void DisplayWidget::set_base_color(const QColor& color) {
   }
   base_color_ = color.toRgb();
   base_color_.setAlpha(255);
+  invalidate_emission(true);
+  update();
+}
+
+void DisplayWidget::set_crt_effects(const CrtEffects& effects) {
+  if (crt_effects_ == effects) {
+    return;
+  }
+  crt_effects_ = effects;
+  invalidate_emission(true);
+  update_effect_timer();
   update();
 }
 
@@ -98,6 +119,7 @@ void DisplayWidget::clear() {
   graphic_screen_.fill(0);
   graphics_mode_ = Terminal::GraphicsMode::kCharacter;
   rebuild_raster();
+  invalidate_emission();
   update();
 }
 
@@ -112,6 +134,7 @@ void DisplayWidget::write_text(int column, int row, std::string_view text) {
     attributes_[destination - 1] = Terminal::kDefaultAttribute;
   }
   rebuild_raster();
+  invalidate_emission();
   update();
 }
 
@@ -122,6 +145,7 @@ void DisplayWidget::set_screen(const Terminal::Screen& screen,
   characters_ = screen;
   attributes_ = attributes;
   rebuild_raster();
+  invalidate_emission();
   update();
 }
 
@@ -135,6 +159,7 @@ void DisplayWidget::set_screen(
   graphics_mode_ = graphics_mode;
   graphic_screen_ = graphic_screen;
   rebuild_raster();
+  invalidate_emission();
   update();
 }
 
@@ -147,6 +172,7 @@ void DisplayWidget::set_cursor(int column, int row, bool visible) {
   cursor_row_ = std::clamp(row, 0, kRows - 1);
   cursor_enabled_ = visible;
   cursor_phase_ = true;
+  invalidate_emission();
   update();
 }
 
@@ -277,48 +303,54 @@ void DisplayWidget::rebuild_raster() {
   }
 }
 
-void DisplayWidget::paintEvent(QPaintEvent* event) {
-  Q_UNUSED(event);
-  QPainter painter(this);
-  painter.fillRect(rect(), phosphor_tone(base_color_, 0.9, 0.012));
+void DisplayWidget::invalidate_emission(bool clear_persistence) {
+  emission_cache_ = {};
+  if (clear_persistence) {
+    persistence_layer_ = {};
+    persistence_clock_.invalidate();
+  }
+}
 
-  const qreal scale = std::min(static_cast<qreal>(width()) / kDisplayWidth,
-                               static_cast<qreal>(height()) / kDisplayHeight);
-  const QSizeF display_size(kDisplayWidth * scale, kDisplayHeight * scale);
-  const QRectF display((width() - display_size.width()) / 2.0,
-                       (height() - display_size.height()) / 2.0,
-                       display_size.width(), display_size.height());
+void DisplayWidget::update_effect_timer() {
+  if (effect_timer_ == nullptr) {
+    return;
+  }
+  if (crt_effects_.persistence || crt_effects_.noise) {
+    effect_timer_->start(33);
+  } else {
+    effect_timer_->stop();
+  }
+}
 
-  QRadialGradient screen_tone(
-      display.center(), display.width() * 0.72,
-      display.center() -
-          QPointF(display.width() * 0.08, display.height() * 0.10));
-  screen_tone.setColorAt(0.0, phosphor_tone(base_color_, 0.95, 0.067));
-  screen_tone.setColorAt(0.72, phosphor_tone(base_color_, 1.0, 0.043));
-  screen_tone.setColorAt(1.0, phosphor_tone(base_color_, 1.0, 0.020));
-  painter.fillRect(display, screen_tone);
-
-  painter.save();
+QImage DisplayWidget::build_emission(const QRectF& display,
+                                     const QRectF& raster) const {
+  QImage emission(size(), QImage::Format_ARGB32_Premultiplied);
+  emission.fill(Qt::transparent);
+  QPainter painter(&emission);
   painter.setClipRect(display);
   painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setPen(Qt::NoPen);
+
   const bool graphics =
       graphics_mode_ != Terminal::GraphicsMode::kCharacter;
   const int raster_width = graphics ? Terminal::kGraphicWidth
                                     : kTextRasterWidth;
   const int raster_height = graphics ? Terminal::kGraphicHeight
                                      : kTextRasterHeight;
-  const QSizeF raster_size(display.width() * raster_width / kTextRasterWidth,
-                           display.height() * raster_height /
-                               kTextRasterHeight);
-  const QRectF raster(display.center() -
-                          QPointF(raster_size.width() / 2.0,
-                                  raster_size.height() / 2.0),
-                      raster_size);
   const qreal dot_width = raster.width() / raster_width;
   const qreal scanline_height = raster.height() / raster_height;
-  const qreal beam_height = scanline_height * 0.74;
+  const qreal base_beam_height =
+      scanline_height * (crt_effects_.scanlines ? 0.58 : 0.94);
 
+  auto beam_scale = [](std::uint8_t attribute) {
+    const int intensity =
+        ((attribute & Terminal::kAttributeIntensityHigh) != 0 ? 2 : 0) |
+        ((attribute & Terminal::kAttributeIntensityLow) != 0 ? 1 : 0);
+    constexpr std::array<qreal, 4> kScales = {0.82, 1.10, 1.0, 0.92};
+    return kScales[intensity];
+  };
   auto run_rect = [&](const RasterRun& run) {
+    const qreal beam_height = base_beam_height * beam_scale(run.attribute);
     return QRectF(raster.left() + run.column * dot_width,
                   raster.top() + run.scanline * scanline_height +
                       (scanline_height - beam_height) / 2.0,
@@ -340,49 +372,199 @@ void DisplayWidget::paintEvent(QPaintEvent* event) {
     }
   };
 
-  painter.setPen(Qt::NoPen);
-  for_each_visible_run([&](const RasterRun& run) {
-    painter.setBrush(attributed_tone(base_color_, 1.6, 1.0, 45, run.attribute));
-    const QRectF stroke =
-        run_rect(run).adjusted(-dot_width * 0.34, -scanline_height * 0.26,
-                               dot_width * 0.34, scanline_height * 0.26);
-    painter.drawRoundedRect(stroke, scanline_height * 0.42,
-                            scanline_height * 0.42);
-  });
+  if (crt_effects_.bloom) {
+    painter.setCompositionMode(QPainter::CompositionMode_Plus);
+    for_each_visible_run([&](const RasterRun& run) {
+      painter.setBrush(
+          attributed_tone(base_color_, 1.55, 0.92, 22, run.attribute));
+      const QRectF stroke =
+          run_rect(run).adjusted(-dot_width * 0.38,
+                                 -scanline_height * 0.16,
+                                 dot_width * 0.38,
+                                 scanline_height * 0.16);
+      painter.drawRoundedRect(stroke, scanline_height * 0.38,
+                              scanline_height * 0.38);
+    });
+    for_each_visible_run([&](const RasterRun& run) {
+      painter.setBrush(
+          attributed_tone(base_color_, 1.42, 0.88, 82, run.attribute));
+      const QRectF stroke =
+          run_rect(run).adjusted(-dot_width * 0.12,
+                                 -scanline_height * 0.035,
+                                 dot_width * 0.12,
+                                 scanline_height * 0.035);
+      painter.drawRoundedRect(stroke, scanline_height * 0.26,
+                              scanline_height * 0.26);
+    });
+  }
 
+  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
   for_each_visible_run([&](const RasterRun& run) {
     painter.setBrush(
-        attributed_tone(base_color_, 1.5, 0.83, 220, run.attribute));
-    const QRectF stroke =
-        run_rect(run).adjusted(-dot_width * 0.10, -scanline_height * 0.08,
-                               dot_width * 0.10, scanline_height * 0.08);
-    painter.drawRoundedRect(stroke, scanline_height * 0.34,
-                            scanline_height * 0.34);
-  });
-
-  for_each_visible_run([&](const RasterRun& run) {
-    painter.setBrush(
-        attributed_tone(base_color_, 1.0, 1.0, 245, run.attribute));
+        attributed_tone(base_color_, 1.0, 1.0, 238, run.attribute));
     const QRectF stroke = run_rect(run);
-    painter.drawRoundedRect(stroke, scanline_height * 0.28,
-                            scanline_height * 0.28);
+    painter.drawRoundedRect(stroke, scanline_height * 0.23,
+                            scanline_height * 0.23);
   });
-
   for_each_visible_run([&](const RasterRun& run) {
     painter.setBrush(
-        attributed_tone(base_color_, 0.25, 1.0, 78, run.attribute));
+        attributed_tone(base_color_, 0.22, 1.0, 68, run.attribute));
     const QRectF stroke =
-        run_rect(run).adjusted(dot_width * 0.04, scanline_height * 0.10,
-                               -dot_width * 0.04, -scanline_height * 0.22);
-    painter.drawRoundedRect(stroke, scanline_height * 0.18,
-                            scanline_height * 0.18);
+        run_rect(run).adjusted(dot_width * 0.05, scanline_height * 0.08,
+                               -dot_width * 0.05,
+                               -scanline_height * 0.17);
+    painter.drawRoundedRect(stroke, scanline_height * 0.13,
+                            scanline_height * 0.13);
   });
+  if (crt_effects_.scanlines) {
+    painter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
+    painter.setBrush(QColor(0, 0, 0, 190));
+    const qreal gap_height = std::max<qreal>(0.34, scanline_height * 0.26);
+    for (int scanline = 1; scanline < raster_height; ++scanline) {
+      const qreal boundary = raster.top() + scanline * scanline_height;
+      painter.drawRect(QRectF(raster.left(), boundary - gap_height / 2.0,
+                              raster.width(), gap_height));
+    }
+  }
+  return emission;
+}
 
-  QRadialGradient vignette(display.center(), display.width() * 0.68);
-  vignette.setColorAt(0.0, QColor(0, 0, 0, 0));
-  vignette.setColorAt(0.62, QColor(0, 0, 0, 3));
-  vignette.setColorAt(1.0, QColor(0, 0, 0, 72));
-  painter.fillRect(display, vignette);
+QImage DisplayWidget::curve_emission(const QImage& source,
+                                     const QRectF& display) const {
+  QImage horizontal(source.size(), QImage::Format_ARGB32_Premultiplied);
+  horizontal.fill(Qt::transparent);
+  QPainter horizontal_painter(&horizontal);
+  const int top = std::max(0, qFloor(display.top()));
+  const int bottom = std::min(source.height(), qCeil(display.bottom()));
+  for (int y = top; y < bottom; ++y) {
+    const qreal normalized =
+        (y + 0.5 - display.center().y()) / (display.height() / 2.0);
+    const qreal inset = display.width() * 0.010 * normalized * normalized;
+    horizontal_painter.drawImage(
+        QRectF(display.left() + inset, y, display.width() - 2.0 * inset, 1.0),
+        source, QRectF(display.left(), y, display.width(), 1.0));
+  }
+  horizontal_painter.end();
+
+  QImage curved(source.size(), QImage::Format_ARGB32_Premultiplied);
+  curved.fill(Qt::transparent);
+  QPainter vertical_painter(&curved);
+  const int left = std::max(0, qFloor(display.left()));
+  const int right = std::min(source.width(), qCeil(display.right()));
+  for (int x = left; x < right; ++x) {
+    const qreal normalized =
+        (x + 0.5 - display.center().x()) / (display.width() / 2.0);
+    const qreal inset = display.height() * 0.010 * normalized * normalized;
+    vertical_painter.drawImage(
+        QRectF(x, display.top() + inset, 1.0,
+               display.height() - 2.0 * inset),
+        horizontal, QRectF(x, display.top(), 1.0, display.height()));
+  }
+  return curved;
+}
+
+const QImage& DisplayWidget::update_persistence(
+    const QImage& current_emission) {
+  if (persistence_layer_.size() != current_emission.size()) {
+    persistence_layer_ = QImage(current_emission.size(),
+                                QImage::Format_ARGB32_Premultiplied);
+    persistence_layer_.fill(Qt::transparent);
+    persistence_clock_.start();
+  }
+  const qint64 elapsed = persistence_clock_.isValid()
+                             ? persistence_clock_.restart()
+                             : 0;
+  const qreal retained = std::pow(0.5, elapsed / 170.0);
+  QPainter persistence_painter(&persistence_layer_);
+  persistence_painter.setCompositionMode(
+      QPainter::CompositionMode_DestinationIn);
+  persistence_painter.fillRect(
+      persistence_layer_.rect(),
+      QColor(255, 255, 255, std::clamp(qRound(retained * 255.0), 0, 255)));
+  persistence_painter.setCompositionMode(QPainter::CompositionMode_Lighten);
+  persistence_painter.drawImage(0, 0, current_emission);
+  return persistence_layer_;
+}
+
+void DisplayWidget::paintEvent(QPaintEvent* event) {
+  Q_UNUSED(event);
+  QPainter painter(this);
+  painter.fillRect(rect(), phosphor_tone(base_color_, 0.9, 0.012));
+
+  const qreal scale = std::min(static_cast<qreal>(width()) / kDisplayWidth,
+                               static_cast<qreal>(height()) / kDisplayHeight);
+  const QSizeF display_size(kDisplayWidth * scale, kDisplayHeight * scale);
+  const QRectF display((width() - display_size.width()) / 2.0,
+                       (height() - display_size.height()) / 2.0,
+                       display_size.width(), display_size.height());
+
+  QRadialGradient screen_tone(
+      display.center(), display.width() * 0.72,
+      display.center() -
+          QPointF(display.width() * 0.08, display.height() * 0.10));
+  screen_tone.setColorAt(0.0, phosphor_tone(base_color_, 0.95, 0.067));
+  screen_tone.setColorAt(0.72, phosphor_tone(base_color_, 1.0, 0.043));
+  screen_tone.setColorAt(1.0, phosphor_tone(base_color_, 1.0, 0.020));
+  painter.fillRect(display, screen_tone);
+
+  const bool graphics =
+      graphics_mode_ != Terminal::GraphicsMode::kCharacter;
+  const int raster_width = graphics ? Terminal::kGraphicWidth
+                                    : kTextRasterWidth;
+  const int raster_height = graphics ? Terminal::kGraphicHeight
+                                     : kTextRasterHeight;
+  const QSizeF raster_size(display.width() * raster_width / kTextRasterWidth,
+                           display.height() * raster_height /
+                               kTextRasterHeight);
+  const QRectF raster(display.center() -
+                          QPointF(raster_size.width() / 2.0,
+                                  raster_size.height() / 2.0),
+                      raster_size);
+
+  if (emission_cache_.size() != size()) {
+    emission_cache_ = build_emission(display, raster);
+    if (crt_effects_.curvature) {
+      emission_cache_ = curve_emission(emission_cache_, display);
+    }
+  }
+  const QImage& visible_emission =
+      crt_effects_.persistence ? update_persistence(emission_cache_)
+                               : emission_cache_;
+  painter.drawImage(0, 0, visible_emission);
+
+  painter.save();
+  painter.setClipRect(display);
+  if (crt_effects_.noise) {
+    std::uint32_t state = noise_phase_ * 747796405U + 2891336453U;
+    const int points = std::max(1, qRound(display.width() * display.height() /
+                                         1350.0));
+    for (int index = 0; index < points; ++index) {
+      state = state * 1664525U + 1013904223U;
+      const int x = qFloor(display.left()) +
+                    static_cast<int>(state %
+                                     std::max(1, qFloor(display.width())));
+      state = state * 1664525U + 1013904223U;
+      const int y = qFloor(display.top()) +
+                    static_cast<int>(state %
+                                     std::max(1, qFloor(display.height())));
+      painter.setPen((state & 0x100U) != 0
+                         ? phosphor_tone(base_color_, 0.5, 0.55, 9)
+                         : QColor(0, 0, 0, 8));
+      painter.drawPoint(x, y);
+    }
+  }
+  if (crt_effects_.vignette) {
+    QRadialGradient vignette(display.center(), display.width() * 0.68);
+    vignette.setColorAt(0.0, QColor(0, 0, 0, 0));
+    vignette.setColorAt(0.62, QColor(0, 0, 0, 3));
+    vignette.setColorAt(1.0, QColor(0, 0, 0, 72));
+    painter.fillRect(display, vignette);
+    QLinearGradient glass(display.topLeft(), display.bottomRight());
+    glass.setColorAt(0.0, QColor(255, 255, 255, 7));
+    glass.setColorAt(0.34, QColor(255, 255, 255, 0));
+    glass.setColorAt(1.0, QColor(0, 0, 0, 8));
+    painter.fillRect(display, glass);
+  }
   painter.restore();
 
   painter.setRenderHint(QPainter::Antialiasing, true);

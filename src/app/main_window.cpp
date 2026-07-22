@@ -56,6 +56,30 @@ constexpr std::array<EmulationSpeed, 5> kEmulationSpeeds = {{
     {"16 MHz (400%)", 4.0},
 }};
 
+/** Restores independently persisted CRT-effect switches. */
+CrtEffects load_crt_effects(const QSettings& settings) {
+  const CrtEffects defaults = DisplayWidget::default_crt_effects();
+  return {
+      settings.value("display/effects/scanlines", defaults.scanlines).toBool(),
+      settings.value("display/effects/bloom", defaults.bloom).toBool(),
+      settings.value("display/effects/persistence", defaults.persistence)
+          .toBool(),
+      settings.value("display/effects/curvature", defaults.curvature).toBool(),
+      settings.value("display/effects/vignette", defaults.vignette).toBool(),
+      settings.value("display/effects/noise", defaults.noise).toBool(),
+  };
+}
+
+/** Persists every CRT effect separately for future sessions. */
+void save_crt_effects(QSettings* settings, const CrtEffects& effects) {
+  settings->setValue("display/effects/scanlines", effects.scanlines);
+  settings->setValue("display/effects/bloom", effects.bloom);
+  settings->setValue("display/effects/persistence", effects.persistence);
+  settings->setValue("display/effects/curvature", effects.curvature);
+  settings->setValue("display/effects/vignette", effects.vignette);
+  settings->setValue("display/effects/noise", effects.noise);
+}
+
 /** Converts a QString to a Unicode-aware host filesystem path. */
 std::filesystem::path filesystem_path(const QString& path) {
   const QByteArray utf8 = path.toUtf8();
@@ -341,7 +365,7 @@ void MainWindow::create_menus() {
   set_display_resolution(selected_resolution);
 
   QMenu* settings_menu = menuBar()->addMenu("&Settings");
-  QAction* screen_color = settings_menu->addAction("Screen &Color...");
+  QAction* screen_color = settings_menu->addAction("Screen &Appearance...");
   connect(screen_color, &QAction::triggered, this,
           &MainWindow::open_screen_color_settings);
   const QColor saved_color =
@@ -351,6 +375,7 @@ void MainWindow::create_menus() {
   display_->set_base_color(saved_color.isValid()
                                ? saved_color
                                : DisplayWidget::default_base_color());
+  display_->set_crt_effects(load_crt_effects(QSettings()));
 }
 
 void MainWindow::refresh_screen() {
@@ -518,14 +543,21 @@ void MainWindow::set_display_resolution(const QSize& resolution) {
 
 void MainWindow::open_screen_color_settings() {
   const QColor original_color = display_->base_color();
-  ScreenColorDialog dialog(original_color, this);
-  dialog.set_preview_handler(
-      [this](const QColor& color) { display_->set_base_color(color); });
+  const CrtEffects original_effects = display_->crt_effects();
+  ScreenColorDialog dialog(original_color, original_effects, this);
+  dialog.set_preview_handler([this](const QColor& color,
+                                    const CrtEffects& effects) {
+    display_->set_base_color(color);
+    display_->set_crt_effects(effects);
+  });
   if (dialog.exec() == QDialog::Accepted) {
-    QSettings().setValue("display/baseColor", dialog.selected_color());
-    statusBar()->showMessage("Screen color saved.", 3000);
+    QSettings settings;
+    settings.setValue("display/baseColor", dialog.selected_color());
+    save_crt_effects(&settings, dialog.selected_effects());
+    statusBar()->showMessage("CRT screen settings saved.", 3000);
   } else {
     display_->set_base_color(original_color);
+    display_->set_crt_effects(original_effects);
   }
   display_->setFocus();
 }

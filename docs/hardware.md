@@ -106,8 +106,18 @@ Timing coordinates do not imply square physical dots on the 9-inch CRT. The Qt
 presentation uses a 7:8 horizontal-to-vertical dot pitch, calibrated from the
 6x7 lit-dot bounding box of `O` in the character data and the supplied monitor
 close-up. Contiguous dots on one scanline are rendered as a single rounded
-phosphor stroke. A narrow dark interval remains between scanlines, surrounded
-by a restrained green/cyan bloom matching the photographed display.
+phosphor stroke. A subtractive gap mask keeps scanlines visible at common host
+resolutions, while low-alpha additive layers provide bloom without filling the
+gap. Brighter attributes produce a slightly wider beam.
+
+The current emission image is cached separately from the glass/background.
+Optional after-effects apply a two-axis barrel warp, exponentially decaying
+phosphor persistence (170 ms half-life), edge shading and a faint glass
+highlight, or animated monochrome noise. Each effect can be previewed and
+persisted independently through **Settings > Screen Appearance...**. The
+monitor service instructions specify a 15.67 kHz horizontal frequency, but the
+emulator does not simulate individual beam sweeps; temporal effects are updated
+at approximately 30 Hz and presented at the host compositor's refresh rate.
 
 Source: service manual sections 3.3/10-1 through 10-2 and Appendix A.
 

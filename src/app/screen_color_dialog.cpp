@@ -1,6 +1,9 @@
 #include "app/screen_color_dialog.h"
 
+#include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
@@ -172,19 +175,21 @@ void ScreenColorWheel::paintEvent(QPaintEvent* event) {
 }
 
 ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
+                                     const CrtEffects& initial_effects,
                                      QWidget* parent)
     : QDialog(parent),
       selected_color_(initial_color.isValid()
                           ? initial_color
-                          : DisplayWidget::default_base_color()) {
-  setWindowTitle("Screen Color");
+                          : DisplayWidget::default_base_color()),
+      selected_effects_(initial_effects) {
+  setWindowTitle("CRT Screen Settings");
   setModal(true);
-  setMinimumWidth(340);
+  setMinimumWidth(410);
 
   auto* layout = new QVBoxLayout(this);
   auto* introduction = new QLabel(
-      "Choose the phosphor hue and saturation. Changes are previewed on the "
-      "emulated display.",
+      "Choose the phosphor color and optical CRT effects. Changes are "
+      "previewed on the emulated display.",
       this);
   introduction->setWordWrap(true);
   layout->addWidget(introduction);
@@ -228,6 +233,53 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
   value_label_->setAlignment(Qt::AlignCenter);
   layout->addWidget(value_label_);
 
+  auto* effects_group = new QGroupBox("CRT after-effects", this);
+  auto* effects_layout = new QGridLayout(effects_group);
+  auto make_effect = [&](const QString& label, const char* object_name,
+                         int row, int column) {
+    auto* effect = new QCheckBox(label, effects_group);
+    effect->setObjectName(object_name);
+    effects_layout->addWidget(effect, row, column);
+    return effect;
+  };
+  scanlines_ =
+      make_effect("Scanline separation", "screenScanlinesCheckBox", 0, 0);
+  bloom_ = make_effect("Phosphor bloom", "screenBloomCheckBox", 0, 1);
+  persistence_ =
+      make_effect("Phosphor persistence", "screenPersistenceCheckBox", 1, 0);
+  curvature_ =
+      make_effect("Tube curvature", "screenCurvatureCheckBox", 1, 1);
+  vignette_ =
+      make_effect("Glass and edge shading", "screenVignetteCheckBox", 2, 0);
+  noise_ =
+      make_effect("Subtle analogue noise", "screenNoiseCheckBox", 2, 1);
+  scanlines_->setToolTip(
+      "Leaves a narrow dark interval between successive electron-beam rows.");
+  bloom_->setToolTip(
+      "Adds low-opacity light spill around the sharper phosphor trace.");
+  persistence_->setToolTip(
+      "Lets recently extinguished phosphor fade over several display frames.");
+  curvature_->setToolTip(
+      "Applies restrained two-axis curvature matching a small CRT tube.");
+  vignette_->setToolTip(
+      "Adds edge darkening and a faint highlight from the monitor glass.");
+  noise_->setToolTip(
+      "Adds a very small amount of animated monochrome video noise.");
+  select_effects(selected_effects_);
+  auto effects_changed = [this]() {
+    selected_effects_ = {
+        scanlines_->isChecked(), bloom_->isChecked(),
+        persistence_->isChecked(), curvature_->isChecked(),
+        vignette_->isChecked(),   noise_->isChecked(),
+    };
+    update_preview();
+  };
+  for (QCheckBox* effect : {scanlines_, bloom_, persistence_, curvature_,
+                            vignette_, noise_}) {
+    connect(effect, &QCheckBox::toggled, this, effects_changed);
+  }
+  layout->addWidget(effects_group);
+
   auto* buttons =
       new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel |
                                QDialogButtonBox::RestoreDefaults,
@@ -236,14 +288,16 @@ ScreenColorDialog::ScreenColorDialog(const QColor& initial_color,
   connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   connect(buttons->button(QDialogButtonBox::RestoreDefaults),
-          &QPushButton::clicked, this,
-          [this]() { select_color(DisplayWidget::default_base_color()); });
+          &QPushButton::clicked, this, [this]() {
+            select_color(DisplayWidget::default_base_color());
+            select_effects(DisplayWidget::default_crt_effects());
+          });
   layout->addWidget(buttons);
   update_preview();
 }
 
 void ScreenColorDialog::set_preview_handler(
-    std::function<void(const QColor&)> handler) {
+    std::function<void(const QColor&, const CrtEffects&)> handler) {
   preview_handler_ = std::move(handler);
 }
 
@@ -251,6 +305,17 @@ void ScreenColorDialog::select_color(const QColor& color) {
   selected_color_ = color;
   wheel_->set_color(color);
   brightness_->setValue(qRound(color.valueF() * 100.0));
+  update_preview();
+}
+
+void ScreenColorDialog::select_effects(const CrtEffects& effects) {
+  selected_effects_ = effects;
+  scanlines_->setChecked(effects.scanlines);
+  bloom_->setChecked(effects.bloom);
+  persistence_->setChecked(effects.persistence);
+  curvature_->setChecked(effects.curvature);
+  vignette_->setChecked(effects.vignette);
+  noise_->setChecked(effects.noise);
   update_preview();
 }
 
@@ -262,7 +327,7 @@ void ScreenColorDialog::update_preview() {
           .arg(color_name));
   value_label_->setText(color_name);
   if (preview_handler_) {
-    preview_handler_(selected_color_);
+    preview_handler_(selected_color_, selected_effects_);
   }
 }
 

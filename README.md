@@ -72,9 +72,11 @@ The **View > Display Resolution** menu offers fixed, aspect-correct display
 sizes from 560x288 through 1680x864. The selected size is remembered between
 runs; 1120x576 is the default.
 
-The **Settings > Screen Color...** panel provides a color wheel and brightness
-control for tuning the CRT phosphor color. It previews changes live, restores
-the previous color when canceled, and remembers accepted colors between runs.
+The **Settings > Screen Appearance...** panel provides a color wheel and
+brightness control for tuning the CRT phosphor color. It also independently
+controls scanline separation, phosphor bloom and persistence, tube curvature,
+glass/edge shading, and subtle analogue noise. Changes are previewed live,
+restored when canceled, and remembered between runs.
 
 The **Machine > Emulation Speed** menu paces emulated time against a monotonic
 host clock. Authentic speed is four million Z80 T-states per second; selectable

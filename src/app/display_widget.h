@@ -2,7 +2,9 @@
 #define P2000C_APP_DISPLAY_WIDGET_H_
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QImage>
+#include <QRectF>
 #include <QWidget>
 #include <array>
 #include <cstdint>
@@ -12,7 +14,21 @@
 
 #include "core/terminal.h"
 
+class QTimer;
+
 namespace p2000c {
+
+/** Independently selectable optical effects applied after raster generation. */
+struct CrtEffects {
+    bool scanlines = true;
+    bool bloom = true;
+    bool persistence = true;
+    bool curvature = true;
+    bool vignette = true;
+    bool noise = false;
+
+    bool operator==(const CrtEffects&) const = default;
+};
 
 /** Renders the P2000C terminal's character and mixed graphics modes. */
 class DisplayWidget : public QWidget {
@@ -41,11 +57,20 @@ class DisplayWidget : public QWidget {
     /** Returns the authentic green phosphor color used by default. */
     static QColor default_base_color();
 
+    /** Returns the recommended authentic CRT-effect selection. */
+    static CrtEffects default_crt_effects() { return {}; }
+
     /** Sets the base phosphor color used to derive all screen tones. */
     void set_base_color(const QColor& color);
 
     /** Returns the current base phosphor color. */
     const QColor& base_color() const { return base_color_; }
+
+    /** Selects the optical effects applied to the generated video raster. */
+    void set_crt_effects(const CrtEffects& effects);
+
+    /** Returns the current optical-effect selection. */
+    const CrtEffects& crt_effects() const { return crt_effects_; }
 
     /** Clears the emulated screen to spaces. */
     void clear();
@@ -94,6 +119,21 @@ class DisplayWidget : public QWidget {
     /** Rebuilds lit-dot runs from the exact 8x12 character generator. */
     void rebuild_raster();
 
+    /** Invalidates the cached current phosphor-emission image. */
+    void invalidate_emission(bool clear_persistence = false);
+
+    /** Starts or stops periodic repaints needed by temporal effects. */
+    void update_effect_timer();
+
+    /** Renders current lit-dot runs into a transparent emission image. */
+    QImage build_emission(const QRectF& display, const QRectF& raster) const;
+
+    /** Applies a restrained two-axis barrel warp to an emission image. */
+    QImage curve_emission(const QImage& source, const QRectF& display) const;
+
+    /** Fades and updates the retained phosphor-emission layer. */
+    const QImage& update_persistence(const QImage& current_emission);
+
     /** Paints the character raster as phosphor scanline strokes. */
     void paintEvent(QPaintEvent* event) override;
 
@@ -106,14 +146,20 @@ class DisplayWidget : public QWidget {
     Terminal::GraphicScreen graphic_screen_{};
     std::vector<RasterRun> raster_runs_;
     std::function<void(std::uint8_t)> key_handler_;
+    QImage emission_cache_;
+    QImage persistence_layer_;
+    QElapsedTimer persistence_clock_;
+    QTimer* effect_timer_ = nullptr;
     int cursor_column_ = 0;
     int cursor_row_ = 0;
     bool cursor_enabled_ = true;
     bool cursor_phase_ = true;
     bool attribute_blink_phase_ = true;
+    std::uint32_t noise_phase_ = 0;
     Terminal::GraphicsMode graphics_mode_ =
         Terminal::GraphicsMode::kCharacter;
     QColor base_color_ = default_base_color();
+    CrtEffects crt_effects_ = default_crt_effects();
 };
 
 }  // namespace p2000c
