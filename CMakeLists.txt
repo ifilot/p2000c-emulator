@@ -350,7 +350,9 @@ if(BUILD_TESTING)
   if(P2000C_BASH_EXECUTABLE)
     add_test(
       NAME p2file_build_script_test
-      COMMAND ${P2000C_BASH_EXECUTABLE}
+      COMMAND ${CMAKE_COMMAND} -E env
+              "P2000C_CLI=$<TARGET_FILE:p2000c_cli>"
+              ${P2000C_BASH_EXECUTABLE}
               ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/build.sh
               ${CMAKE_CURRENT_BINARY_DIR}/p2file-minimal-test.flp
     )

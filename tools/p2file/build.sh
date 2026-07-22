@@ -6,7 +6,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 output=${1:-"${repo_root}/images/p2file.flp"}
 
-cli="${repo_root}/build/p2000c_cli"
+build_dir="${repo_root}/build"
+cli=${P2000C_CLI:-}
 ipl="${repo_root}/tools/ipldump/IPLDUMP.BIN"
 system_disk="${repo_root}/images/system.flp"
 asm_com="${repo_root}/media/files/core/ASM.COM"
@@ -14,12 +15,27 @@ load_com="${repo_root}/media/files/core/LOAD.COM"
 source_asm="${script_dir}/P2FILE.ASM"
 media_module_dir="${repo_root}/tools/build_media"
 
-if [[ ! -x "${cli}" ]]; then
-  if [[ ! -f "${repo_root}/build/CMakeCache.txt" ]]; then
-    cmake -S "${repo_root}" -B "${repo_root}/build" \
+find_cli() {
+  local candidate
+  for candidate in \
+    "${build_dir}/p2000c_cli" \
+    "${build_dir}/p2000c_cli.exe" \
+    "${build_dir}/Release/p2000c_cli.exe"; do
+    if [[ -x "${candidate}" ]]; then
+      cli=${candidate}
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -z "${cli}" ]] && ! find_cli; then
+  if [[ ! -f "${build_dir}/CMakeCache.txt" ]]; then
+    cmake -S "${repo_root}" -B "${build_dir}" \
       -DP2000C_BUILD_APP=OFF
   fi
-  cmake --build "${repo_root}/build" --target p2000c_cli
+  cmake --build "${build_dir}" --target p2000c_cli --config Release
+  find_cli || true
 fi
 
 for required_file in \

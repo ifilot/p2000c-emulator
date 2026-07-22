@@ -28,6 +28,7 @@ jobs:
             qt_arch: win64_msvc2022_64
             package_arch: windows-x86_64
             platform: windows
+            vcpkg_triplet: x64-windows
           - name: Linux x86-64
             os: ubuntu-22.04
             qt_arch: linux_gcc_64
@@ -52,6 +53,25 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
+      - name: Prepare vcpkg binary cache
+        if: matrix.platform != 'linux'
+        id: vcpkg-cache
+        shell: bash
+        run: |
+          cmake -E make_directory "${RUNNER_TEMP}/vcpkg-binary-cache"
+          revision="$(git -C "${VCPKG_INSTALLATION_ROOT}" rev-parse --short=12 HEAD)"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          echo "image_version=${ImageVersion:-unknown}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore vcpkg binary cache
+        if: matrix.platform != 'linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.vcpkg_triplet }}-${{ steps.vcpkg-cache.outputs.image_version }}-${{ steps.vcpkg-cache.outputs.revision }}-${{ hashFiles('packaging/vcpkg-triplets/*.cmake') }}
+          restore-keys: |
+            vcpkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.vcpkg_triplet }}-
+
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -61,6 +81,8 @@ jobs:
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
         shell: bash
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
         run: |
           brew install ninja
           vcpkg install openal-soft:${{ matrix.vcpkg_triplet }} \
@@ -69,7 +91,9 @@ jobs:
       - name: Install Windows OpenAL
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: vcpkg install openal-soft:x64-windows
+        env:
+          VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-binary-cache
+        run: vcpkg install openal-soft:${{ matrix.vcpkg_triplet }}
 
       - name: Install Qt and Qt Installer Framework
         uses: jurplel/install-qt-action@v4.3.1
@@ -91,7 +115,7 @@ jobs:
             args+=(
               -A x64
               -DCMAKE_TOOLCHAIN_FILE="${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake"
-              -DVCPKG_TARGET_TRIPLET=x64-windows
+              -DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg_triplet }}
             )
           else
             args+=(-G Ninja)
