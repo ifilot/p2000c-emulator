@@ -64,6 +64,7 @@ endif()
 
 foreach(manual IN ITEMS
     P2000C-SystemRefServiceManual.pdf
+    P2093_CoPowerBoard.pdf
     P2519CPM_UserGuide.pdf
     P2519_CPM_Reference.pdf)
   set(path "${data_root}/manuals/${manual}")
@@ -74,8 +75,9 @@ foreach(manual IN ITEMS
   endif()
 endforeach()
 
-foreach(floppy IN ITEMS chess.flp ipldump.flp system.flp zork.flp)
-  set(path "${data_root}/images/${floppy}")
+foreach(floppy IN ITEMS chess.flp copower-boot.flp ipldump.flp p2edit.flp
+                        p2file.flp system.flp zork.flp)
+  set(path "${data_root}/images/cpm/${floppy}")
   require_file("${path}")
   file(SIZE "${path}" size)
   if(NOT size EQUAL 655360)
@@ -83,7 +85,24 @@ foreach(floppy IN ITEMS chess.flp ipldump.flp system.flp zork.flp)
   endif()
 endforeach()
 
-set(hard_disk "${data_root}/images/blank.hda")
+set(dos_floppy "${data_root}/images/msdos/copower-msdos-2.11.flp")
+require_file("${dos_floppy}")
+file(SIZE "${dos_floppy}" dos_floppy_size)
+if(NOT dos_floppy_size EQUAL 819200)
+  message(FATAL_ERROR "Packaged MS-DOS floppy has invalid size: ${dos_floppy}")
+endif()
+
+foreach(application IN ITEMS masm-3.01.flp turbo-c-2.01-cli.flp)
+  set(path "${data_root}/images/msdos/applications/${application}")
+  require_file("${path}")
+  file(SIZE "${path}" size)
+  if(NOT size EQUAL 819200)
+    message(FATAL_ERROR
+      "Packaged MS-DOS application floppy has invalid size: ${path}")
+  endif()
+endforeach()
+
+set(hard_disk "${data_root}/images/hard-disks/blank.hda")
 require_file("${hard_disk}")
 file(SIZE "${hard_disk}" hard_disk_size)
 if(NOT hard_disk_size EQUAL 10485760)
@@ -95,7 +114,8 @@ require_file("${data_root}/firmware/IPLDUMP.BIN")
 require_file("${data_root}/licenses/LICENSE")
 require_file("${data_root}/licenses/THIRD_PARTY.md")
 require_file("${data_root}/licenses/README.md")
-require_file("${data_root}/licenses/third-party/LICENSE")
+require_file("${data_root}/licenses/third-party/LICENSE-BLINK16.txt")
+require_file("${data_root}/licenses/third-party/LICENSE-SUPERZAZU-Z80.txt")
 require_file("${data_root}/licenses/third-party/LICENSE-MAME-SAMPLES.txt")
 if(REQUIRE_RUNTIME)
   require_file("${data_root}/licenses/third-party/LICENSE-OPENAL-SOFT.txt")

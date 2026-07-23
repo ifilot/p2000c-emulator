@@ -12,6 +12,27 @@ The vendored source and its license notice are retained unchanged. The MIT
 terms continue to apply to those files even though the combined emulator is
 distributed under GPLv3.
 
+## blink16 8086 interpreter
+
+- Project: <https://github.com/ghaerr/blink16>
+- Commit: `162d824f782fe53cd6e1608b7f99cdcc09388abb`
+- Vendored at: `third_party/blink16_8086`
+- License: ISC; see `third_party/blink16_8086/LICENSE`
+- Purpose: 8088 instruction execution for the Philips CoPower board
+
+The instruction decoder and execution logic are derived from
+`blink16/blink16/8086.c`, itself developed through the `86sim` project. Its
+upstream source header records the following lineage:
+
+- original emulator from Andrew Jenner's reenigne project;
+- DOS enhancements by TK Chia;
+- ELKS support, a substantial rewrite, and disassembler work by Greg Haerr.
+
+The pinned blink16 repository supplies the included ISC notice, with copyright
+2022 Justine Alexandra Roberts Tunney. The P2000C embedding was adapted to keep
+state per emulated machine, route memory and I/O through CoPower callbacks, and
+model reset, HLT, external interrupts, and the 8088's 20-bit address bus.
+
 ## MAME 5.25-inch floppy samples
 
 - Project: <https://www.mamedev.org/>
@@ -65,3 +86,10 @@ contents, not established in this repository. They are included for historical
 preservation and interoperability; downstream distributors must make their own
 rights assessment. This project is independent and is not affiliated with or
 endorsed by Philips, Digital Research, or the owners of the bundled programs.
+
+The bundled Microsoft Macro Assembler 3.01 and Borland Turbo C 2.01
+command-line disks were created from source copies supplied by the project
+maintainer. These proprietary applications are not relicensed under GPLv3.
+The repository also does not grant redistribution rights for them. A downstream
+distributor must document and comply with the licenses applicable to all
+historical application images it distributes.

@@ -11,7 +11,7 @@
 
 namespace p2000c {
 
-/** A fixed-geometry, directly writable P2000C raw disk image. */
+/** A directly writable P2000C raw disk image with size-inferred geometry. */
 class RawDiskImage {
  public:
   enum class Kind {
@@ -19,16 +19,23 @@ class RawDiskImage {
     kHardDisk,
   };
 
+  /** Physical SASI block size and legacy CP/M floppy sector size. */
   static constexpr std::size_t kSectorSize = 256;
   static constexpr std::size_t kFloppyCylinders = 80;
   static constexpr std::size_t kFloppyHeads = 2;
   static constexpr std::size_t kFloppySectorsPerTrack = 16;
   static constexpr std::size_t kFloppySize = 640 * 1024;
+  static constexpr std::size_t kDosFloppySectorsPerTrack = 10;
+  static constexpr std::size_t kDosFloppySectorSize = 512;
+  static constexpr std::size_t kDosFloppySize = 800 * 1024;
   static constexpr std::size_t kHardDiskSize = 10 * 1024 * 1024;
   static_assert(kFloppySize == kFloppyCylinders * kFloppyHeads *
                                     kFloppySectorsPerTrack * kSectorSize);
+  static_assert(kDosFloppySize ==
+                kFloppyCylinders * kFloppyHeads *
+                    kDosFloppySectorsPerTrack * kDosFloppySectorSize);
 
-  /** Opens an image and verifies its exact fixed size. */
+  /** Opens an image and verifies one of the supported exact sizes. */
   static std::optional<RawDiskImage> open(const std::filesystem::path& path,
                                           Kind kind, std::string* error);
 
@@ -40,6 +47,14 @@ class RawDiskImage {
 
   /** Returns the complete raw byte sequence. */
   std::span<const std::uint8_t> data() const { return data_; }
+
+  /** Returns the physical sector byte size of a mounted floppy. */
+  std::size_t floppy_sector_size() const { return floppy_sector_size_; }
+
+  /** Returns the physical sector count per floppy track. */
+  std::size_t floppy_sectors_per_track() const {
+    return floppy_sectors_per_track_;
+  }
 
   /** Returns one floppy sector in cylinder/head/sector order. */
   std::span<const std::uint8_t> floppy_sector(
@@ -62,8 +77,9 @@ class RawDiskImage {
 
  private:
   /** Returns a raw floppy-sector byte offset, or no value when invalid. */
-  static std::optional<std::size_t> floppy_offset(
-      std::uint8_t cylinder, std::uint8_t head, std::uint8_t sector);
+  std::optional<std::size_t> floppy_offset(
+      std::uint8_t cylinder, std::uint8_t head,
+      std::uint8_t sector) const;
 
   /** Replaces a checked byte range in memory and on disk. */
   bool write(std::size_t offset, std::span<const std::uint8_t> data,
@@ -72,6 +88,8 @@ class RawDiskImage {
   std::filesystem::path path_;
   Kind kind_ = Kind::kFloppy;
   std::vector<std::uint8_t> data_;
+  std::size_t floppy_sector_size_ = kSectorSize;
+  std::size_t floppy_sectors_per_track_ = kFloppySectorsPerTrack;
 };
 
 }  // namespace p2000c

@@ -22,7 +22,14 @@ void set_error(std::string* error, const std::string& message) {
 
 }  // namespace
 
-P2000cMachine::P2000cMachine() : cpu_(std::make_unique<z80>()) {
+P2000cMachine::P2000cMachine()
+    : cpu_(std::make_unique<z80>()),
+      copower_(
+          [this](std::uint16_t address) { return ram_[address]; },
+          [this](std::uint16_t address, std::uint8_t value) {
+            write_memory(address, value);
+          },
+          [this]() { request_interrupt(0xdc, false); }) {
   z80_init(cpu_.get());
   cpu_->read_byte = &P2000cMachine::cpu_read;
   cpu_->write_byte = &P2000cMachine::cpu_write;
@@ -110,6 +117,18 @@ bool P2000cMachine::mount_hard_disk(std::size_t drive,
   return true;
 }
 
+bool P2000cMachine::unmount_hard_disk(std::size_t drive) {
+  if (drive >= hard_disks_.size()) {
+    return false;
+  }
+  hard_disks_[drive].reset();
+  sasi_blocks_[drive] = 0;
+  sasi_phase_ = SasiPhase::kBusFree;
+  sasi_command_length_ = 0;
+  sasi_status_ = 0;
+  return true;
+}
+
 const RawDiskImage* P2000cMachine::floppy_drive(std::uint8_t drive) const {
   if (drive >= floppy_drives_.size() || !floppy_drives_[drive].has_value()) {
     return nullptr;
@@ -137,6 +156,7 @@ void P2000cMachine::reset() {
   dma_read_high_byte_ = false;
   handshake_started_ = false;
   terminal_interrupt_requested_ = false;
+  sio_b_polling_ = false;
   sio_b_dtr_ = false;
   fdc_reset_released_ = false;
   fdc_sense_pending_ = false;
@@ -159,6 +179,7 @@ void P2000cMachine::reset() {
   next_timer_cycle_ = kTimerPeriod;
   storage_busy_until_ = 0;
   fdc_ready_cycle_ = 0;
+  copower_.reset();
 }
 
 void P2000cMachine::run_for(std::uint64_t t_states) {
@@ -171,6 +192,7 @@ void P2000cMachine::run_for(std::uint64_t t_states) {
     z80_step(cpu_.get());
     const unsigned long instruction_cycles = cpu_->cyc - previous_cycles;
     total_cycles_ += instruction_cycles;
+    copower_.run_for(instruction_cycles);
     if (instruction_cycles >= t_states) {
       break;
     }
@@ -308,6 +330,12 @@ void P2000cMachine::cpu_port_out(z80* cpu, std::uint8_t port,
     case 0x2b:
       machine->write_terminal_sio(port, value);
       break;
+    case 0x30:
+      machine->copower_.write_interrupt_vector(value);
+      break;
+    case 0x31:
+      machine->copower_.write_control(value);
+      break;
     default:
       break;
   }
@@ -324,12 +352,15 @@ void P2000cMachine::update_devices() {
     terminal_.begin_handshake();
     handshake_started_ = true;
   }
-  if (terminal_.has_input() && sio_b_dtr_ && !sio_b_receive_ready_ &&
+  if (terminal_.has_input() && (sio_b_dtr_ || sio_b_polling_) &&
+      !sio_b_receive_ready_ &&
       !terminal_interrupt_requested_) {
     sio_b_receive_byte_ = terminal_.take_input();
     sio_b_receive_ready_ = true;
-    request_interrupt(0xe4);
-    terminal_interrupt_requested_ = true;
+    if (!sio_b_polling_) {
+      request_interrupt(0xe4);
+      terminal_interrupt_requested_ = true;
+    }
   }
   while (total_cycles_ >= next_timer_cycle_) {
     request_interrupt(0xd8);
@@ -513,23 +544,29 @@ void P2000cMachine::complete_fdc_command() {
     const std::uint8_t size_code = fdc_command_[5];
     const std::uint8_t last_sector = fdc_command_[6];
     const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
+    const RawDiskImage* image = floppy_drive(drive);
+    const std::size_t sector_size =
+        image != nullptr
+            ? image->floppy_sector_size()
+            : (std::size_t{128} << std::min<std::uint8_t>(size_code, 7));
     const int sectors = static_cast<int>(
-        (dma_length + RawDiskImage::kSectorSize - 1) /
-        RawDiskImage::kSectorSize);
+        (dma_length + sector_size - 1) / sector_size);
     const std::uint8_t result_sector = static_cast<std::uint8_t>(
         std::min<std::size_t>(last_sector,
                               first_sector +
-                                  (dma_length + RawDiskImage::kSectorSize - 1) /
-                                      RawDiskImage::kSectorSize -
+                                  (dma_length + sector_size - 1) /
+                                      sector_size -
                                   1));
     std::vector<std::uint8_t> track_data;
-    const RawDiskImage* image = floppy_drive(drive);
     if (drive < fdc_tracks_.size()) {
       fdc_tracks_[drive] = cylinder;
       fdc_sides_[drive] = head;
     }
-    bool media_ok = image != nullptr;
-    for (std::uint16_t id = first_sector; media_ok && id <= last_sector; ++id) {
+    const std::uint16_t final_data_sector =
+        static_cast<std::uint16_t>(first_sector + sectors - 1);
+    bool media_ok = image != nullptr && final_data_sector <= last_sector;
+    for (std::uint16_t id = first_sector;
+         media_ok && id <= final_data_sector; ++id) {
       const std::span<const std::uint8_t> sector =
           image->floppy_sector(cylinder, head, static_cast<std::uint8_t>(id));
       if (sector.empty()) {
@@ -565,19 +602,22 @@ void P2000cMachine::complete_fdc_command() {
     const std::uint8_t size_code = fdc_command_[5];
     const std::uint8_t last_sector = fdc_command_[6];
     const std::size_t dma_length = (dma_channels_[0].count & 0x3fff) + 1;
-    const int requested_sectors = static_cast<int>(
-        (dma_length + RawDiskImage::kSectorSize - 1) /
-        RawDiskImage::kSectorSize);
-    const std::uint8_t result_sector = static_cast<std::uint8_t>(
-        std::min<std::size_t>(last_sector,
-                              first_sector +
-                                  (dma_length + RawDiskImage::kSectorSize - 1) /
-                                      RawDiskImage::kSectorSize -
-                                  1));
     RawDiskImage* image =
         drive < floppy_drives_.size() && floppy_drives_[drive].has_value()
             ? &*floppy_drives_[drive]
             : nullptr;
+    const std::size_t sector_size =
+        image != nullptr
+            ? image->floppy_sector_size()
+            : (std::size_t{128} << std::min<std::uint8_t>(size_code, 7));
+    const int requested_sectors = static_cast<int>(
+        (dma_length + sector_size - 1) / sector_size);
+    const std::uint8_t result_sector = static_cast<std::uint8_t>(
+        std::min<std::size_t>(last_sector,
+                              first_sector +
+                                  (dma_length + sector_size - 1) /
+                                      sector_size -
+                                  1));
     if (drive < fdc_tracks_.size()) {
       fdc_tracks_[drive] = cylinder;
       fdc_sides_[drive] = head;
@@ -589,17 +629,17 @@ void P2000cMachine::complete_fdc_command() {
     fdc_ready_cycle_ = storage_busy_until_;
     std::optional<std::vector<std::uint8_t>> data = take_disk_dma();
     const std::size_t sectors = data.has_value()
-                                    ? data->size() / RawDiskImage::kSectorSize
+                                    ? data->size() / sector_size
                                     : 0;
     bool media_ok = image != nullptr && data.has_value() && sectors != 0 &&
-                    data->size() % RawDiskImage::kSectorSize == 0 &&
+                    data->size() % sector_size == 0 &&
                     first_sector + sectors - 1 <= last_sector;
     std::string error;
     for (std::size_t index = 0; media_ok && index < sectors; ++index) {
       media_ok = image->write_floppy_sector(
           cylinder, head, static_cast<std::uint8_t>(first_sector + index),
           std::span<const std::uint8_t>(*data).subspan(
-              index * RawDiskImage::kSectorSize, RawDiskImage::kSectorSize),
+              index * sector_size, sector_size),
           &error);
     }
     if (media_ok) {
@@ -752,6 +792,7 @@ std::uint8_t P2000cMachine::read_terminal_sio(std::uint8_t port) {
     return static_cast<std::uint8_t>(0x04 | (sio_b_receive_ready_ ? 0x01 : 0));
   }
   sio_b_receive_ready_ = false;
+  sio_b_polling_ = false;
   return sio_b_receive_byte_;
 }
 
@@ -759,6 +800,12 @@ void P2000cMachine::write_terminal_sio(std::uint8_t port, std::uint8_t value) {
   if (port == 0x2a) {
     terminal_.receive(value);
     return;
+  }
+  if (value == 0 && !sio_b_receive_ready_) {
+    // A channel-reset/status-select write also acknowledges a character that
+    // software consumed by polling instead of through the normal ISR path.
+    terminal_interrupt_requested_ = false;
+    sio_b_polling_ = true;
   }
   if (sio_b_register_ != 0) {
     if (sio_b_register_ == 5) {

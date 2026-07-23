@@ -33,12 +33,27 @@ std::optional<RawDiskImage> RawDiskImage::open(
   image.kind_ = kind;
   image.data_.assign(std::istreambuf_iterator<char>(input),
                      std::istreambuf_iterator<char>());
-  const std::size_t expected =
-      kind == Kind::kFloppy ? kFloppySize : kHardDiskSize;
-  if (image.data_.size() != expected) {
+  bool valid_size = false;
+  if (kind == Kind::kFloppy) {
+    if (image.data_.size() == kFloppySize) {
+      valid_size = true;
+    } else if (image.data_.size() == kDosFloppySize) {
+      image.floppy_sector_size_ = kDosFloppySectorSize;
+      image.floppy_sectors_per_track_ = kDosFloppySectorsPerTrack;
+      valid_size = true;
+    }
+  } else {
+    valid_size = image.data_.size() == kHardDiskSize;
+  }
+  if (!valid_size) {
+    const std::string expected =
+        kind == Kind::kFloppy
+            ? std::to_string(kFloppySize) + " or " +
+                  std::to_string(kDosFloppySize)
+            : std::to_string(kHardDiskSize);
     set_error(error, std::string("A raw ") + kind_name(kind) +
-                         " image must be exactly " +
-                         std::to_string(expected) + " bytes; got " +
+                         " image must be exactly " + expected +
+                         " bytes; got " +
                          std::to_string(image.data_.size()) + ".");
     return std::nullopt;
   }
@@ -46,16 +61,16 @@ std::optional<RawDiskImage> RawDiskImage::open(
 }
 
 std::optional<std::size_t> RawDiskImage::floppy_offset(
-    std::uint8_t cylinder, std::uint8_t head, std::uint8_t sector) {
+    std::uint8_t cylinder, std::uint8_t head, std::uint8_t sector) const {
   if (cylinder >= kFloppyCylinders || head >= kFloppyHeads || sector == 0 ||
-      sector > kFloppySectorsPerTrack) {
+      sector > floppy_sectors_per_track_) {
     return std::nullopt;
   }
   const std::size_t logical_sector =
       (static_cast<std::size_t>(cylinder) * kFloppyHeads + head) *
-          kFloppySectorsPerTrack +
+          floppy_sectors_per_track_ +
       sector - 1;
-  return logical_sector * kSectorSize;
+  return logical_sector * floppy_sector_size_;
 }
 
 std::span<const std::uint8_t> RawDiskImage::floppy_sector(
@@ -68,7 +83,8 @@ std::span<const std::uint8_t> RawDiskImage::floppy_sector(
   if (!offset.has_value()) {
     return {};
   }
-  return std::span<const std::uint8_t>(data_).subspan(*offset, kSectorSize);
+  return std::span<const std::uint8_t>(data_).subspan(
+      *offset, floppy_sector_size_);
 }
 
 std::span<const std::uint8_t> RawDiskImage::blocks(
@@ -87,7 +103,7 @@ bool RawDiskImage::write_floppy_sector(
   const std::optional<std::size_t> offset =
       kind_ == Kind::kFloppy ? floppy_offset(cylinder, head, sector)
                              : std::nullopt;
-  if (!offset.has_value() || data.size() != kSectorSize) {
+  if (!offset.has_value() || data.size() != floppy_sector_size_) {
     set_error(error, "Invalid raw floppy sector write.");
     return false;
   }

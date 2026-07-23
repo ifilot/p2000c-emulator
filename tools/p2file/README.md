@@ -4,9 +4,9 @@ P2FILE is a two-panel file manager for CP/M 2.2 on the Philips P2000C. It is
 written entirely in Intel 8080 assembly and uses only documented BDOS calls and
 P2000C terminal controls.
 
-The bundled `images/p2file.flp` development disk contains `ASM.COM`,
+The bundled `images/cpm/p2file.flp` development disk contains `ASM.COM`,
 `LOAD.COM`, `P2FILE.ASM`, and the generated `P2FILE.PRN`, `P2FILE.HEX`, and
-`P2FILE.COM`. Boot CP/M from `images/system.flp`, mount the development disk as
+`P2FILE.COM`. Boot CP/M from `images/cpm/system.flp`, mount the development disk as
 B:, and rebuild or run it on the emulated machine:
 
 ```text
@@ -22,15 +22,15 @@ For a minimal compiled floppy, run:
 ./tools/p2file/build.sh
 ```
 
-The default output is `images/p2file.flp`. An alternative output path can be
+The default output is `images/cpm/p2file.flp`. An alternative output path can be
 passed as the first argument. The script creates a clean disk with only
 `ASM.COM`, `LOAD.COM`, and `P2FILE.ASM`, compiles and links inside the emulator,
 launches `P2FILE.COM` as a check, and writes a final disk containing those three
 inputs plus `P2FILE.PRN`, `P2FILE.HEX`, and `P2FILE.COM`.
 
 The graphical emulator exposes the bundled image under **Media > Drive A/B >
-Use P2FILE Development Floppy**. Selecting it mounts a writable session copy,
-leaving the bundled template unchanged.
+CP/M Images > P2FILE Development Floppy**. Selecting it mounts a writable
+session copy, leaving the bundled template unchanged.
 
 The left and right panels initially show A: and B:. Available keys are:
 

@@ -6,10 +6,10 @@ Research CP/M `ASM.COM` assembler. It uses only Intel 8080 mnemonics.
 
 ## Prepare the floppy
 
-The emulator bundles `images/ipldump.flp`, a non-bootable writable floppy with
-`ASM.COM`, `LOAD.COM`, and `IPLDUMP.ASM`. Mount it in drive B through **Media >
-Drive B > Use IPL Dump Toolchain Floppy**. On a real P2000C, copy these three
-files to a writable CP/M floppy with at least roughly 12 KiB free for the
+The emulator bundles `images/cpm/ipldump.flp`, a non-bootable writable floppy
+with `ASM.COM`, `LOAD.COM`, and `IPLDUMP.ASM`. Mount it through **Media > Drive
+B > CP/M Images > IPL Dump Toolchain Floppy**. On a real P2000C, copy these
+three files to a writable CP/M floppy with at least roughly 12 KiB free for the
 assembler output, executable, and final dump.
 
 The repository copy of `IPLDUMP.ASM` is already encoded as CP/M text: ASCII,

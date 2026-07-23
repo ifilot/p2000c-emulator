@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/copower_board.h"
 #include "core/raw_disk_image.h"
 #include "core/terminal.h"
 
@@ -75,15 +76,18 @@ class P2000cMachine {
     /** Loads and validates a 4 KiB mainboard IPL firmware byte sequence. */
     bool load_ipl_rom(std::span<const std::uint8_t> bytes, std::string* error);
 
-    /** Mounts floppy drive A as a directly writable 640 KiB FLP image. */
+    /** Mounts floppy drive A as a directly writable 640/800 KiB FLP image. */
     bool mount_floppy_a(const std::filesystem::path& path, std::string* error);
 
-    /** Mounts floppy drive B as a directly writable 640 KiB FLP image. */
+    /** Mounts floppy drive B as a directly writable 640/800 KiB FLP image. */
     bool mount_floppy_b(const std::filesystem::path& path, std::string* error);
 
     /** Mounts one of the two 10 MiB SASI hard-disk images. */
     bool mount_hard_disk(std::size_t drive, const std::filesystem::path& path,
                          std::string* error);
+
+    /** Removes one of the two SASI hard-disk images. */
+    bool unmount_hard_disk(std::size_t drive);
 
     /** Restores reset state, including the IPL ROM overlay at address zero. */
     void reset();
@@ -135,6 +139,22 @@ class P2000cMachine {
 
     /** Returns elapsed mainboard Z80 T-states since reset. */
     std::uint64_t cycles() const;
+
+    /** Installs or removes the 512 KiB Philips CoPower board. */
+    void set_copower_enabled(bool enabled) {
+      copower_.set_enabled(enabled);
+    }
+
+    /** Returns whether the optional CoPower board is installed. */
+    bool copower_enabled() const { return copower_.enabled(); }
+
+    /** Returns whether the CoPower 8088 stopped on an unsupported operation. */
+    bool copower_faulted() const { return copower_.faulted(); }
+
+    /** Returns the CoPower 8088 execution location for diagnostics. */
+    std::pair<std::uint16_t, std::uint16_t> copower_program_counter() const {
+      return {copower_.code_segment(), copower_.program_counter()};
+    }
 
     /** Reads a byte through the current mainboard memory mapping. */
     std::uint8_t read_memory(std::uint16_t address) const;
@@ -263,6 +283,7 @@ class P2000cMachine {
     std::bitset<kMemorySize> memory_written_{};
     std::array<std::uint16_t, 256> memory_page_write_counts_{};
     std::unique_ptr<z80> cpu_;
+    CoPowerBoard copower_;
     std::array<std::optional<RawDiskImage>, 2> floppy_drives_;
     std::array<std::optional<RawDiskImage>, 2> hard_disks_;
     Terminal terminal_;
@@ -277,6 +298,7 @@ class P2000cMachine {
     bool dma_read_high_byte_ = false;
     bool handshake_started_ = false;
     bool terminal_interrupt_requested_ = false;
+    bool sio_b_polling_ = false;
     bool sio_b_dtr_ = false;
     bool fdc_reset_released_ = false;
     bool fdc_sense_pending_ = false;

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(p2000c_emulator VERSION 0.1.0 LANGUAGES C CXX)
+# Release-version source of truth. Application metadata, About text, package
+# names, installer metadata, and CI release names are derived from this value.
+project(p2000c_emulator VERSION 0.2.0 LANGUAGES C CXX)
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
      "${PROJECT_VERSION}\n")
@@ -24,7 +26,15 @@ add_library(z80_core STATIC
 )
 target_include_directories(z80_core PUBLIC third_party/superzazu_z80)
 
+add_library(i8088_core STATIC
+  third_party/blink16_8086/i8088.cpp
+  third_party/blink16_8086/i8088.h
+)
+target_include_directories(i8088_core PUBLIC third_party/blink16_8086)
+
 add_library(p2000c_core STATIC
+  src/core/copower_board.cpp
+  src/core/copower_board.h
   src/core/p2000c_machine.cpp
   src/core/p2000c_machine.h
   src/core/raw_disk_image.cpp
@@ -33,7 +43,7 @@ add_library(p2000c_core STATIC
   src/core/terminal.h
 )
 target_include_directories(p2000c_core PUBLIC src)
-target_link_libraries(p2000c_core PRIVATE z80_core)
+target_link_libraries(p2000c_core PRIVATE i8088_core z80_core)
 target_compile_options(p2000c_core PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
   $<$<CXX_COMPILER_ID:MSVC>:/W4>
@@ -41,6 +51,12 @@ target_compile_options(p2000c_core PRIVATE
 
 add_executable(p2000c_media_info tools/media_info/media_info.cpp)
 target_link_libraries(p2000c_media_info PRIVATE p2000c_core)
+
+add_executable(p2000c_imd_to_flp tools/imd_to_flp/imd_to_flp.cpp)
+target_link_libraries(p2000c_imd_to_flp PRIVATE p2000c_core)
+install(TARGETS p2000c_imd_to_flp
+  RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT application
+)
 
 add_executable(p2000c_cli tools/p2000c_cli/p2000c_cli.cpp)
 target_link_libraries(p2000c_cli PRIVATE p2000c_core)
@@ -82,13 +98,19 @@ if(P2000C_BUILD_APP)
       "icons/drive-floppy-525.png"
       "icons/drive-hard-disk-sasi.png"
       "logo/logo-p2000c.svg"
-      "images/blank.hda"
-      "images/chess.flp"
-      "images/ipldump.flp"
-      "images/p2file.flp"
-      "images/system.flp"
-      "images/zork.flp"
+      "images/cpm/chess.flp"
+      "images/cpm/copower-boot.flp"
+      "images/cpm/ipldump.flp"
+      "images/cpm/p2edit.flp"
+      "images/cpm/p2file.flp"
+      "images/cpm/system.flp"
+      "images/cpm/zork.flp"
+      "images/hard-disks/blank.hda"
+      "images/msdos/copower-msdos-2.11.flp"
+      "images/msdos/applications/masm-3.01.flp"
+      "images/msdos/applications/turbo-c-2.01-cli.flp"
       "tools/ipldump/IPLDUMP.BIN"
+      "third_party/blink16_8086/LICENSE"
       "third_party/superzazu_z80/LICENSE"
       "LICENSE"
       "THIRD_PARTY.md"
@@ -139,13 +161,25 @@ if(P2000C_BUILD_APP)
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/utilities/p2file"
     COMPONENT application
   )
+  install(FILES tools/p2edit/P2EDIT.ASM tools/p2edit/README.md
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/utilities/p2edit"
+    COMPONENT application
+  )
   install(FILES LICENSE THIRD_PARTY.md README.md
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses"
     COMPONENT application
   )
-  install(FILES
-      third_party/superzazu_z80/LICENSE
-      audio/LICENSE-MAME-SAMPLES.txt
+  install(FILES third_party/blink16_8086/LICENSE
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
+    RENAME LICENSE-BLINK16.txt
+    COMPONENT application
+  )
+  install(FILES third_party/superzazu_z80/LICENSE
+    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
+    RENAME LICENSE-SUPERZAZU-Z80.txt
+    COMPONENT application
+  )
+  install(FILES audio/LICENSE-MAME-SAMPLES.txt
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/licenses/third-party"
     COMPONENT application
   )
@@ -304,14 +338,26 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
   )
 
+  add_test(
+    NAME p2edit_format_test
+    COMMAND ${CMAKE_COMMAND}
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/p2edit/P2EDIT.ASM
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
+  )
+
   add_executable(raw_disk_image_test tests/raw_disk_image_test.cpp)
   target_link_libraries(raw_disk_image_test PRIVATE p2000c_core)
   add_test(
     NAME raw_disk_image_test
     COMMAND raw_disk_image_test
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/hard-disks/blank.hda
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/msdos/copower-msdos-2.11.flp
   )
+
+  add_executable(copower_board_test tests/copower_board_test.cpp)
+  target_link_libraries(copower_board_test PRIVATE p2000c_core)
+  add_test(NAME copower_board_test COMMAND copower_board_test)
 
   add_executable(p2000c_machine_test tests/p2000c_machine_test.cpp)
   target_link_libraries(p2000c_machine_test PRIVATE p2000c_core)
@@ -319,11 +365,11 @@ if(BUILD_TESTING)
     NAME p2000c_machine_test
     COMMAND p2000c_machine_test
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/zork.flp
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/chess.flp
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/ipldump.flp
-            ${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/zork.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/chess.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/ipldump.flp
+            ${CMAKE_CURRENT_SOURCE_DIR}/images/hard-disks/blank.hda
   )
 
   add_test(
@@ -331,8 +377,53 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:p2000c_cli>
             -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
-            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
+            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake
+  )
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/media/floppies/COPOWERC.IMD" AND
+     EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/media/floppies/COPOWER.IMD")
+    add_test(
+      NAME copower_diagnostic_test
+      COMMAND ${CMAKE_COMMAND}
+              -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+              -DCONVERTER=$<TARGET_FILE:p2000c_imd_to_flp>
+              -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+              -DCOPOWER_IMD=${CMAKE_CURRENT_SOURCE_DIR}/media/floppies/COPOWERC.IMD
+              -DCOPOWER_DOS_IMD=${CMAKE_CURRENT_SOURCE_DIR}/media/floppies/COPOWER.IMD
+              -DCOPOWER_DOS_FLP=${CMAKE_CURRENT_SOURCE_DIR}/images/msdos/copower-msdos-2.11.flp
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_copower.cmake
+    )
+  endif()
+
+  add_test(
+    NAME copower_msboot_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+            -DCOPOWER_CPM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/copower-boot.flp
+            -DCOPOWER_DOS_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/msdos/copower-msdos-2.11.flp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_msboot.cmake
+  )
+
+  add_test(
+    NAME copower_masm_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+            -DCOPOWER_CPM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/copower-boot.flp
+            -DMASM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/msdos/applications/masm-3.01.flp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_masm.cmake
+  )
+
+  add_test(
+    NAME copower_turbo_c_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+            -DCOPOWER_CPM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/copower-boot.flp
+            -DTURBO_C_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/msdos/applications/turbo-c-2.01-cli.flp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_turbo_c.cmake
   )
 
   add_test(
@@ -340,10 +431,20 @@ if(BUILD_TESTING)
     COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:p2000c_cli>
             -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
-            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/system.flp
-            -DP2FILE_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/p2file.flp
-            -DHARD_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/blank.hda
+            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
+            -DP2FILE_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2file.flp
+            -DHARD_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/hard-disks/blank.hda
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p2file.cmake
+  )
+
+  add_test(
+    NAME p2edit_cli_test
+    COMMAND ${CMAKE_COMMAND}
+            -DPROGRAM=$<TARGET_FILE:p2000c_cli>
+            -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
+            -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
+            -DP2EDIT_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2edit.flp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p2edit.cmake
   )
 
   find_program(P2000C_BASH_EXECUTABLE bash)
@@ -355,6 +456,14 @@ if(BUILD_TESTING)
               ${P2000C_BASH_EXECUTABLE}
               ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/build.sh
               ${CMAKE_CURRENT_BINARY_DIR}/p2file-minimal-test.flp
+    )
+    add_test(
+      NAME p2edit_build_script_test
+      COMMAND ${CMAKE_COMMAND} -E env
+              "P2000C_CLI=$<TARGET_FILE:p2000c_cli>"
+              ${P2000C_BASH_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2edit/build.sh
+              ${CMAKE_CURRENT_BINARY_DIR}/p2edit-minimal-test.flp
     )
   endif()
 
@@ -384,13 +493,19 @@ if(BUILD_TESTING)
         "icons/drive-floppy-525.png"
         "icons/drive-hard-disk-sasi.png"
         "logo/logo-p2000c.svg"
-        "images/blank.hda"
-        "images/chess.flp"
-        "images/ipldump.flp"
-        "images/p2file.flp"
-        "images/system.flp"
-        "images/zork.flp"
+        "images/cpm/chess.flp"
+        "images/cpm/copower-boot.flp"
+        "images/cpm/ipldump.flp"
+        "images/cpm/p2edit.flp"
+        "images/cpm/p2file.flp"
+        "images/cpm/system.flp"
+        "images/cpm/zork.flp"
+        "images/hard-disks/blank.hda"
+        "images/msdos/copower-msdos-2.11.flp"
+        "images/msdos/applications/masm-3.01.flp"
+        "images/msdos/applications/turbo-c-2.01-cli.flp"
         "tools/ipldump/IPLDUMP.BIN"
+        "third_party/blink16_8086/LICENSE"
         "third_party/superzazu_z80/LICENSE"
         "LICENSE"
         "THIRD_PARTY.md"

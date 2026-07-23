@@ -145,6 +145,12 @@ int main(int argc, char* argv[]) {
     std::cerr << "SASI read was not completed without hardware latency.\n";
     return 1;
   }
+  if (!immediate_sasi_machine.unmount_hard_disk(0) ||
+      immediate_sasi_machine.hard_disk(0).has_value() ||
+      immediate_sasi_machine.unmount_hard_disk(2)) {
+    std::cerr << "SASI hard disk could not be removed safely.\n";
+    return 1;
+  }
 
   p2000c::Terminal graphics_terminal;
   const std::uint64_t initial_bell = graphics_terminal.bell_revision();

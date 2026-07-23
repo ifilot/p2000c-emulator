@@ -667,10 +667,42 @@ void DisplayWidget::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_Escape:
       value = 0x1b;
       break;
+    case Qt::Key_Home:
+      value = 0x01;
+      break;
+    case Qt::Key_End:
+      value = 0x04;
+      break;
+    case Qt::Key_Right:
+      value = (event->modifiers() & Qt::ControlModifier) != 0 ? 0x05 : 0x06;
+      break;
+    case Qt::Key_Down:
+      value = 0x0a;
+      break;
+    case Qt::Key_Left:
+      value = (event->modifiers() & Qt::ControlModifier) != 0 ? 0x02 : 0x15;
+      break;
+    case Qt::Key_PageDown:
+      value = 0x16;
+      break;
+    case Qt::Key_PageUp:
+      value = 0x19;
+      break;
+    case Qt::Key_Up:
+      value = 0x1a;
+      break;
+    case Qt::Key_Delete:
+      value = 0x7f;
+      break;
     default: {
-      const QByteArray bytes = event->text().toLatin1();
-      if (!bytes.isEmpty()) {
-        value = static_cast<std::uint8_t>(bytes.front());
+      if ((event->modifiers() & Qt::ControlModifier) != 0 &&
+          event->key() >= Qt::Key_A && event->key() <= Qt::Key_Z) {
+        value = static_cast<std::uint8_t>(event->key() - Qt::Key_A + 1);
+      } else {
+        const QByteArray bytes = event->text().toLatin1();
+        if (!bytes.isEmpty()) {
+          value = static_cast<std::uint8_t>(bytes.front());
+        }
       }
       break;
     }

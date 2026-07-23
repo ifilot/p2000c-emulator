@@ -20,9 +20,11 @@ int main(int argc, char* argv[]) {
               << '\n';
     return 1;
   }
-  const auto kind = size == p2000c::RawDiskImage::kFloppySize
-                        ? p2000c::RawDiskImage::Kind::kFloppy
-                        : p2000c::RawDiskImage::Kind::kHardDisk;
+  const bool is_floppy =
+      size == p2000c::RawDiskImage::kFloppySize ||
+      size == p2000c::RawDiskImage::kDosFloppySize;
+  const auto kind = is_floppy ? p2000c::RawDiskImage::Kind::kFloppy
+                              : p2000c::RawDiskImage::Kind::kHardDisk;
   const auto image = p2000c::RawDiskImage::open(path, kind, &error);
   if (!image.has_value()) {
     std::cerr << error << '\n';
@@ -31,12 +33,17 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Type:          "
             << (kind == p2000c::RawDiskImage::Kind::kFloppy
-                    ? "640 KiB FLP floppy"
+                    ? (size == p2000c::RawDiskImage::kDosFloppySize
+                           ? "800 KiB FLP floppy"
+                           : "640 KiB FLP floppy")
                     : "10 MiB HDA hard disk")
             << '\n'
             << "Bytes:         " << image->data().size() << '\n'
             << "Sectors:       "
-            << image->data().size() / p2000c::RawDiskImage::kSectorSize
+            << image->data().size() /
+                   (kind == p2000c::RawDiskImage::Kind::kFloppy
+                        ? image->floppy_sector_size()
+                        : p2000c::RawDiskImage::kSectorSize)
             << '\n';
 
   const std::span<const std::uint8_t> boot = image->blocks(0, 1);

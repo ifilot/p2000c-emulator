@@ -1,10 +1,19 @@
 # Philips P2000C emulator
 
-The Philips P2000C Emulator recreates the classic Z80-based Philips P2000C
-luggable computer. It provides a Qt graphical interface for interactive use and
-a headless command-line mode for scripting and automated testing.
+[![GitHub Actions status](https://github.com/ifilot/p2000c-emulator/actions/workflows/build-and-package.yml/badge.svg)](https://github.com/ifilot/p2000c-emulator/actions/workflows/build-and-package.yml) [![Version](https://img.shields.io/github/v/tag/ifilot/p2000c-emulator?label=version&sort=semver)](https://github.com/ifilot/p2000c-emulator/releases/latest) [![License: GPLv3](https://img.shields.io/github/license/ifilot/p2000c-emulator?color=blue)](https://github.com/ifilot/p2000c-emulator/blob/main/LICENSE)
 
-![Screenshot of the P2000C Emulator](screenshots/screenshot_emulator.png)
+The Philips P2000C Emulator recreates the classic Z80-based Philips P2000C
+luggable computer.
+
+## Features
+
+- Boots CP/M and runs original P2000C software
+- Supports two floppy drives while preserving source disk images by default
+- Emulates the optional 512 KiB Philips P2093 CoPower 8088 board and MS-DOS 2.11
+- Reproduces the 80x24 text display and graphics mode
+- Offers accelerated storage for fast, deterministic automation
+
+![The P2000C Emulator running chess in front of the original Philips P2000C](screenshots/hero-p2000c-emulator.png)
 
 ## Downloads
 
@@ -36,15 +45,21 @@ application installation directory, because that directory is removed during
 uninstallation. AppImage users can simply replace the old AppImage with the new
 one.
 
-## Features
+## P2093 CoPower board emulation
 
-- Boots CP/M and runs original P2000C software
-- Supports two floppy drives while preserving source disk images by default
-- Reproduces the 80x24 text display and graphics mode
-- Provides scripted keyboard input and screen-text detection
-- Exposes the screen, CPU state, cursor, cycle count, and memory as JSON
-- Offers accelerated storage for fast, deterministic automation
-- Builds as either a complete desktop application or a standalone headless core
+![The emulated CoPower MS-DOS environment over the original Philips P2093 board](screenshots/hero-copower.png)
+
+The optional Philips P2093 CoPower board added an Intel 8088 and (a maximum of)
+512 KiB of memory to the Z80-based P2000C, allowing it to run MS-DOS alongside
+its native CP/M environment. The emulator models the communication between both
+processors, shared-memory arbitration, interrupts, and DRAM refresh closely
+enough to boot the original MS-DOS 2.11 software and pass the board's `TEST88`
+diagnostics.
+
+The desktop application includes a one-click fast-boot path, bundled boot and
+system-disk images, and automatic board configuration. The same environment can
+also be scripted through the headless command-line emulator for reproducible
+tests and automated software runs.
 
 ## Compilation
 
@@ -85,7 +100,7 @@ Run the graphical shell with:
 ./build/p2000c
 ```
 
-### Headless command-line emulation
+## Headless command-line emulation
 
 `p2000c_cli` drives the Qt-free emulator core in batch mode. Actions are
 performed from left to right, so one invocation can boot CP/M, wait for a
@@ -94,8 +109,8 @@ prompt, type commands, and inspect the resulting screen and memory:
 ```sh
 ./build/p2000c_cli \
   --ipl tools/ipldump/IPLDUMP.BIN \
-  --floppy-a images/system.flp \
-  --floppy-b images/zork.flp \
+  --floppy-a images/cpm/system.flp \
+  --floppy-b images/cpm/zork.flp \
   --wait-for 'A>' \
   --send 'B:\rZORK1\r' \
   --wait-for 'West of House' \
@@ -114,26 +129,15 @@ images unchanged. Pass `--write-through` only when guest writes should persist.
 `--fast-storage` bypasses modeled floppy latency for automation. See all options
 with `./build/p2000c_cli --help`.
 
-The CLI and its core can be built without Qt or OpenAL:
-
-```sh
-cmake -S . -B build-headless -DP2000C_BUILD_APP=OFF
-cmake --build build-headless --target p2000c_cli
-```
-
-### CP/M utilities
-
-Each utility has its own directory under `tools/`. `tools/p2file` contains the
-pure-assembly P2FILE two-panel file manager and its usage instructions. The
-compiled `images/p2file.flp` disk contains P2FILE, its assembly source and build
-outputs, `ASM.COM`, and `LOAD.COM`. Recreate it with
-`./tools/p2file/build.sh`.
-
 ## License
 
 The emulator's original source code is licensed under the GNU General Public
 License version 3 only (`GPL-3.0-only`); see `LICENSE`. The vendored Z80 core
-retains its MIT/Expat license and copyright notice.
+retains its MIT/Expat license and copyright notice. The 8086/8088 interpreter
+is derived from `blink16`/`86sim` and retains the ISC notice shipped by the
+pinned upstream `blink16` repository. Its source lineage credits Andrew Jenner,
+TK Chia, and Greg Haerr; see `THIRD_PARTY.md` and
+`third_party/blink16_8086/LICENSE`.
 
 The manuals, firmware dumps, disk images, and supplied font image are reference
 or machine assets and are not relicensed by the GPL declaration for our source

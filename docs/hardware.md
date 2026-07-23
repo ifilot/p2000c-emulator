@@ -50,6 +50,8 @@ Source: service manual section 3.2/7-1 through 7-3.
 | `24`-`27` | CTC II |
 | `28`-`29` | Communications SIO channel |
 | `2a`-`2b` | Terminal SIO channel |
+| `30` | CoPower 8088 interrupt vector, write-only |
+| `31` | CoPower reset/run/common-memory control, write-only |
 
 Port `1f` bit 4 resets the uPD765 when low, bit 5 controls the motor, bit 6
 enables drive 4 selection, and bit 7 selects SASI instead of the floppy
@@ -57,6 +59,48 @@ controller. The floppy controller and SASI share DMA channel 0 and CTC II
 interrupt channel 3.
 
 Sources: service manual sections 3.2/6-3 through 6-4 and 3.2/11-4 through 11-5.
+
+## P2093 CoPower board
+
+The optional Philips P2093 8088 CoPower board adds a 5 MHz 8088 and up to
+512 KiB of local RAM. The implemented configuration installs the full 512 KiB.
+Physical 8088 addresses `00000`-`7ffff` select that private RAM;
+`f0000`-`fffff` alias the mainboard Z80's complete 64 KiB RAM. The Z80
+continues to own the P2000C peripherals and services requests made by the
+MS-DOS-side BIOS.
+
+The CP/M utilities control the board through two output ports:
+
+- port `30h` supplies an interrupt vector and asserts the 8088 interrupt;
+- port `31h`, value `1`, resets and holds the 8088;
+- port `31h`, value `2`, releases or resumes the 8088;
+- port `31h`, value `3`, locks the 8088 out of common memory until value `2`.
+
+An 8088 `OUT` instruction asserts the reciprocal Z80 interrupt expected at IM2
+vector `dch`. The CPUs run concurrently at instruction boundaries. Scheduling
+uses their documented 5:4 clock ratio with a nominal 8088
+clocks-per-instruction estimate; individual bus cycles are not modeled.
+
+The board currently behaves as if no 8087 is installed. Its 8088 consumes 8087
+escape instructions without performing a coprocessor operation, which is the
+hardware-visible behavior needed by the original diagnostic's absent-8087
+path. The original `TEST88.COM` short-memory, all-vector bidirectional
+interrupt, DRAM refresh, and common-memory lock loops pass.
+
+`MSBOOT.COM` loads and starts the MS-DOS-side code through common memory and
+the reciprocal interrupts. The original Z80-resident CoPower BIOS continues to
+service P2000C hardware for the 8088, including floppy requests, so no invented
+host BIOS interface is needed. The supplied MS-DOS 2.11 disk boots through
+this path and reaches its command prompt.
+
+The desktop's ordinary CP/M startup arrangement includes two unformatted,
+all-`e5` SASI templates. They are useful as writable CP/M media but contain no
+valid CoPower DOS hard-disk metadata. Selecting a bundled CoPower floppy
+therefore installs the board automatically and ejects only those disposable
+templates. Persistent user-mounted HDA images are not removed.
+
+Source: P2093 CoPower Board User Manual and the original Philips `TEST88.COM`
+diagnostic on the CoPower CP/M boot disk.
 
 ## Floppy boot
 
@@ -79,12 +123,19 @@ copy, and then hide the IPL ROM without resetting the machine.
 
 The current uPD765 model implements reset, specify, sense-interrupt,
 recalibrate, seek, read-data, and write-data behavior used by the supplied
-system. Both uPD765 units use exact 655,360-byte raw FLP media. Bytes are stored
-by cylinder, then head, then sector ID 1 through 16; the CP/M filesystem applies
-its documented odd/even sector translation above that physical ordering.
-The manual's `STAT` output reports 632 KiB of CP/M record capacity: the raw
-medium is still exactly 640 KiB, with two 4 KiB physical tracks reserved for
-the boot system.
+systems. Raw FLP geometry is inferred from the exact file size:
+
+| Format | Cylinders | Heads | Sectors/track | Sector bytes | Raw size |
+|---|---:|---:|---:|---:|---:|
+| P2000C CP/M | 80 | 2 | 16 | 256 | 655,360 bytes |
+| P2093 CoPower MS-DOS | 80 | 2 | 10 | 512 | 819,200 bytes |
+
+Bytes are stored by cylinder, then head, then ascending sector ID. The CP/M
+filesystem applies its documented odd/even sector translation above that
+physical ordering. The manual's `STAT` output reports 632 KiB of CP/M record
+capacity: its raw medium is still exactly 640 KiB, with two 4 KiB physical
+tracks reserved for the boot system. The MS-DOS boot sector's BPB records its
+512-byte sector and ten-sector track geometry.
 
 Sources: service manual sections 2.1/3-2 through 3-4, 2.1/3-5 through 3-13,
 and 3.2/7-1 through 7-4.

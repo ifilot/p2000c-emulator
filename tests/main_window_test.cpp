@@ -14,6 +14,7 @@
 #include <QFrame>
 #include <QFontDatabase>
 #include <QImage>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLayout>
@@ -36,6 +37,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "app/display_widget.h"
 #include "app/hardware_audio.h"
@@ -443,7 +445,37 @@ int main(int argc, char* argv[]) {
   qputenv("ALSOFT_DRIVERS", "null");
   QApplication application(argc, argv);
   QApplication::setApplicationName("P2000C Emulator UI Test");
+  QApplication::setApplicationVersion(P2000C_VERSION);
   QApplication::setOrganizationName("P2000C Emulator Project");
+
+  p2000c::DisplayWidget key_display;
+  std::vector<std::uint8_t> translated_keys;
+  key_display.set_key_handler(
+      [&](std::uint8_t value) { translated_keys.push_back(value); });
+  const auto send_key = [&](int key,
+                            Qt::KeyboardModifiers modifiers = {}) {
+    QKeyEvent event(QEvent::KeyPress, key, modifiers);
+    QApplication::sendEvent(&key_display, &event);
+  };
+  send_key(Qt::Key_Left);
+  send_key(Qt::Key_Right);
+  send_key(Qt::Key_Up);
+  send_key(Qt::Key_Down);
+  send_key(Qt::Key_Home);
+  send_key(Qt::Key_End);
+  send_key(Qt::Key_PageUp);
+  send_key(Qt::Key_PageDown);
+  send_key(Qt::Key_Delete);
+  send_key(Qt::Key_Left, Qt::ControlModifier);
+  send_key(Qt::Key_Right, Qt::ControlModifier);
+  send_key(Qt::Key_O, Qt::ControlModifier);
+  const std::vector<std::uint8_t> expected_keys = {
+      0x15, 0x06, 0x1a, 0x0a, 0x01, 0x04,
+      0x19, 0x16, 0x7f, 0x02, 0x05, 0x0f};
+  if (translated_keys != expected_keys) {
+    std::cerr << "Host editor keys were not translated to P2000C bytes.\n";
+    return 1;
+  }
 
   const QString media_directory =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
@@ -482,6 +514,7 @@ int main(int argc, char* argv[]) {
   settings.setValue("display/effects/brightnessPercent", 125);
   settings.setValue("audio/enabled", false);
   settings.setValue("audio/volume", 62);
+  settings.setValue("machine/copowerEnabled", true);
   settings.setValue("machine/storageDelays", false);
 
   p2000c::MainWindow window;
@@ -497,19 +530,33 @@ int main(int argc, char* argv[]) {
   QAction* cpm_user_guide = find_named_action(&window, "cpmUserGuideAction");
   QAction* cpm_reference =
       find_named_action(&window, "cpmReferenceManualAction");
+  QAction* copower_reference =
+      find_named_action(&window, "copowerReferenceManualAction");
   QAction* hardware_delays =
       find_named_action(&window, "enableHardwareDelaysAction");
+  QAction* copower =
+      find_named_action(&window, "installCoPowerBoardAction");
+  QAction* fast_boot =
+      find_named_action(&window, "fastBootMsDosAction");
+  QMenu* machine_menu = window.findChild<QMenu*>("machineMenu");
   if (display == nullptr || resolution == nullptr || screen_color == nullptr ||
       screenshot == nullptr || sound_volume == nullptr || about == nullptr ||
       system_manual == nullptr || cpm_user_guide == nullptr ||
-      cpm_reference == nullptr || !system_manual->isEnabled() ||
+      cpm_reference == nullptr || copower_reference == nullptr ||
+      hardware_delays == nullptr || copower == nullptr ||
+      fast_boot == nullptr || machine_menu == nullptr ||
+      !machine_menu->actions().contains(fast_boot) ||
+      !fast_boot->text().contains("P2093") ||
+      !copower->text().contains("P2093") ||
+      !system_manual->isEnabled() ||
       !cpm_user_guide->isEnabled() || !cpm_reference->isEnabled() ||
+      !copower_reference->isEnabled() ||
       !QFileInfo(system_manual->data().toString()).isFile() ||
       !QFileInfo(cpm_user_guide->data().toString()).isFile() ||
       !QFileInfo(cpm_reference->data().toString()).isFile() ||
-      hardware_delays == nullptr ||
+      !QFileInfo(copower_reference->data().toString()).isFile() ||
       window.windowIcon().isNull() ||
-      hardware_delays->isChecked() ||
+      hardware_delays->isChecked() || !copower->isChecked() ||
       screenshot->shortcut() != QKeySequence(Qt::CTRL | Qt::SHIFT |
                                              Qt::Key_S)) {
     return 1;
@@ -532,16 +579,14 @@ int main(int argc, char* argv[]) {
     auto* license = dialog != nullptr
                         ? dialog->findChild<QTextBrowser*>("aboutLicenseText")
                         : nullptr;
-    auto* third_party_licenses =
-        dialog != nullptr
-            ? dialog->findChild<QTextBrowser*>("aboutThirdPartyLicenses")
-            : nullptr;
     auto* buttons =
         dialog != nullptr
             ? dialog->findChild<QDialogButtonBox*>("aboutButtons")
             : nullptr;
     about_valid =
-        tabs != nullptr && tabs->count() == 4 && overview != nullptr &&
+        tabs != nullptr && tabs->count() == 3 &&
+        tabs->tabText(1) == "Third-party notices and licenses" &&
+        tabs->tabText(2) == "GPL-3.0 license" && overview != nullptr &&
         logo != nullptr && !logo->pixmap().isNull() &&
         overview->toPlainText().contains(P2000C_VERSION) &&
         overview->toPlainText().contains("not affiliated") &&
@@ -549,10 +594,18 @@ int main(int argc, char* argv[]) {
         notices->toPlainText().contains("Drive-panel illustrations") &&
         notices->toPlainText().contains("OpenAI image-generation") &&
         notices->toPlainText().contains("MAME") &&
+        notices->toPlainText().contains("Andrew Jenner") &&
+        notices->toPlainText().contains("TK Chia") &&
+        notices->toPlainText().contains("Greg Haerr") &&
         notices->toPlainText().contains("redistribution rights") &&
-        third_party_licenses != nullptr &&
-        third_party_licenses->toPlainText().contains("MIT License") &&
-        third_party_licenses->toPlainText().contains("BSD-3-Clause") &&
+        notices->toPlainText().contains("Full third-party license texts") &&
+        notices->toPlainText().contains("MIT License") &&
+        notices->toPlainText().contains(
+            "blink16/86sim 8086 interpreter") &&
+        notices->toPlainText().contains(
+            "Copyright 2022 Justine Alexandra Roberts Tunney") &&
+        notices->toPlainText().contains("ISC") &&
+        notices->toPlainText().contains("BSD-3-Clause") &&
         license != nullptr &&
         license->toPlainText().contains("GNU GENERAL PUBLIC LICENSE") &&
         buttons != nullptr;
@@ -764,7 +817,90 @@ int main(int argc, char* argv[]) {
   speed->trigger();
 
   QAction* system = find_named_action(&window, "mountSystemFloppyAAction");
-  if (system == nullptr) {
+  QAction* copower_cpm =
+      find_named_action(&window, "mountCoPowerCpmFloppyAAction");
+  QAction* copower_dos =
+      find_named_action(&window, "mountCoPowerDosFloppyAAction");
+  QAction* masm =
+      find_named_action(&window, "mountMasm301FloppyAAction");
+  QAction* turbo_c =
+      find_named_action(&window, "mountTurboC201CliFloppyAAction");
+  QMenu* cpm_images =
+      window.findChild<QMenu*>("bundledCpmFloppiesAMenu");
+  QMenu* msdos_images =
+      window.findChild<QMenu*>("bundledMsDosFloppiesAMenu");
+  if (system == nullptr || copower_cpm == nullptr || copower_dos == nullptr ||
+      masm == nullptr || turbo_c == nullptr || cpm_images == nullptr ||
+      msdos_images == nullptr ||
+      !cpm_images->actions().contains(system) ||
+      !cpm_images->actions().contains(copower_cpm) ||
+      !msdos_images->actions().contains(copower_dos) ||
+      !msdos_images->actions().contains(masm) ||
+      !msdos_images->actions().contains(turbo_c)) {
+    std::cerr << "Bundled floppy menus are not grouped by operating system.\n";
+    return 1;
+  }
+  copower->setChecked(false);
+  if (copower->isChecked() ||
+      settings.value("machine/copowerEnabled").toBool()) {
+    std::cerr << "CoPower board could not be removed before media test.\n";
+    return 1;
+  }
+  copower_cpm->trigger();
+  auto* drive_a_current = window.findChild<QAction*>("currentFloppyAAction");
+  const QString copower_cpm_path =
+      drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
+  const auto* current_hard_disk_1 =
+      window.findChild<QAction*>("currentHardDisk1Action");
+  const auto* current_hard_disk_2 =
+      window.findChild<QAction*>("currentHardDisk2Action");
+  if (!copower->isChecked() ||
+      !settings.value("machine/copowerEnabled").toBool() ||
+      !copower_cpm->isChecked() ||
+      !window.statusBar()->currentMessage().contains("Run MSBOOT") ||
+      !window.statusBar()->currentMessage().contains(
+          "blank hard disks were ejected") ||
+      current_hard_disk_1 == nullptr || current_hard_disk_1->isChecked() ||
+      current_hard_disk_2 == nullptr || current_hard_disk_2->isChecked() ||
+      QFileInfo(copower_cpm_path).size() !=
+          static_cast<qint64>(p2000c::RawDiskImage::kFloppySize)) {
+    std::cerr << "Bundled CoPower CP/M action did not prepare the hardware "
+                 "and mount its raw image.\n";
+    return 1;
+  }
+  copower->setChecked(false);
+  copower_dos->trigger();
+  const QString copower_dos_path =
+      drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
+  if (!copower->isChecked() ||
+      !settings.value("machine/copowerEnabled").toBool() ||
+      !copower_dos->isChecked() || copower_cpm->isChecked() ||
+      !window.statusBar()->currentMessage().contains("MS-DOS 2.11") ||
+      QFileInfo(copower_dos_path).size() !=
+          static_cast<qint64>(p2000c::RawDiskImage::kDosFloppySize)) {
+    std::cerr << "Bundled CoPower DOS action did not mount its raw image.\n";
+    return 1;
+  }
+  copower->setChecked(false);
+  masm->trigger();
+  const QString masm_path =
+      drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
+  if (!copower->isChecked() || !masm->isChecked() ||
+      !window.statusBar()->currentMessage().contains("MASM 3.01") ||
+      QFileInfo(masm_path).size() !=
+          static_cast<qint64>(p2000c::RawDiskImage::kDosFloppySize)) {
+    std::cerr << "Bundled MASM disk was not mounted correctly.\n";
+    return 1;
+  }
+  copower->setChecked(false);
+  turbo_c->trigger();
+  const QString turbo_c_path =
+      drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
+  if (!copower->isChecked() || !turbo_c->isChecked() || masm->isChecked() ||
+      !window.statusBar()->currentMessage().contains("Turbo C 2.01") ||
+      QFileInfo(turbo_c_path).size() !=
+          static_cast<qint64>(p2000c::RawDiskImage::kDosFloppySize)) {
+    std::cerr << "Bundled Turbo C disk was not mounted correctly.\n";
     return 1;
   }
   system->trigger();
@@ -773,7 +909,6 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  auto* drive_a_current = window.findChild<QAction*>("currentFloppyAAction");
   const QString system_path =
       drive_a_current != nullptr ? drive_a_current->statusTip() : QString();
   if (system_path.isEmpty() ||
@@ -906,7 +1041,7 @@ int main(int argc, char* argv[]) {
   drive_panel->grab().save(QDir(test_root).filePath("drive-panel-preview.png"));
   status_column->grab().save(
       QDir(test_root).filePath("status-panels-preview.png"));
-  QFile system_master(":/images/system.flp");
+  QFile system_master(":/images/cpm/system.flp");
   QFile system_session(system_path);
   if (!system_master.open(QIODevice::ReadOnly) ||
       !system_session.open(QIODevice::ReadOnly) ||
@@ -940,8 +1075,10 @@ int main(int argc, char* argv[]) {
       find_named_action(&window, "mountIplDumpFloppyBAction");
   QAction* p2file =
       find_named_action(&window, "mountP2FileFloppyBAction");
+  QAction* p2edit =
+      find_named_action(&window, "mountP2EditFloppyBAction");
   if (zork == nullptr || chess == nullptr || ipldump == nullptr ||
-      p2file == nullptr) {
+      p2file == nullptr || p2edit == nullptr) {
     return 1;
   }
   zork->trigger();
@@ -982,6 +1119,15 @@ int main(int argc, char* argv[]) {
     std::cerr << "Bundled P2FILE development floppy did not mount.\n";
     return 1;
   }
+  p2edit->trigger();
+  const QString p2edit_path = drive_b_current->statusTip();
+  if (p2edit_path.isEmpty() ||
+      !validate_image(p2edit_path,
+                      p2000c::RawDiskImage::Kind::kFloppy) ||
+      !p2edit->isChecked() || p2file->isChecked()) {
+    std::cerr << "Bundled P2EDIT development floppy did not mount.\n";
+    return 1;
+  }
 
   QAction* blank = find_named_action(&window, "mountBlankFloppyBAction");
   if (blank == nullptr) {
@@ -1002,6 +1148,14 @@ int main(int argc, char* argv[]) {
   if (!validate_image(drive_b_current->statusTip(),
                       p2000c::RawDiskImage::Kind::kFloppy)) {
     return 1;
+  }
+  for (int drive = 1; drive <= 2; ++drive) {
+    auto* bundled = window.findChild<QAction*>(
+        QString("mountDefaultHardDisk%1Action").arg(drive));
+    if (bundled == nullptr) {
+      return 1;
+    }
+    bundled->trigger();
   }
   for (int drive = 1; drive <= 2; ++drive) {
     auto* status =
@@ -1047,7 +1201,7 @@ int main(int argc, char* argv[]) {
         QDir(scratch_directory.path())
             .filePath(QString("recent-%1.flp").arg(index));
     QFile::remove(path);
-    if (!QFile::copy(":/images/system.flp", path) ||
+    if (!QFile::copy(":/images/cpm/system.flp", path) ||
         !window.mount_floppy(filesystem_path(path), 1)) {
       return 1;
     }
@@ -1060,6 +1214,39 @@ int main(int argc, char* argv[]) {
       recent_menu->actions().size() != 5 ||
       drive_b_status->text().endsWith(" *")) {
     std::cerr << "Per-drive recent images were not limited to the latest five.\n";
+    return 1;
+  }
+
+  fast_boot->trigger();
+  QEventLoop fast_boot_wait;
+  QTimer fast_boot_poll;
+  fast_boot_poll.setInterval(10);
+  QTimer fast_boot_timeout;
+  fast_boot_timeout.setSingleShot(true);
+  fast_boot_timeout.setInterval(15000);
+  QObject::connect(&fast_boot_poll, &QTimer::timeout, &fast_boot_wait, [&]() {
+    if (window.statusBar()->currentMessage().contains(
+            "P2093 CoPower MS-DOS 2.11 ready")) {
+      fast_boot_wait.quit();
+    }
+  });
+  QObject::connect(&fast_boot_timeout, &QTimer::timeout, &fast_boot_wait,
+                   &QEventLoop::quit);
+  fast_boot_poll.start();
+  fast_boot_timeout.start();
+  fast_boot_wait.exec();
+
+  const auto& dos_screen = display->screen();
+  const std::string dos_text(dos_screen.begin(), dos_screen.end());
+  if (!fast_boot->isEnabled() || !copower->isChecked() ||
+      !window.statusBar()->currentMessage().contains(
+          "P2093 CoPower MS-DOS 2.11 ready") ||
+      dos_text.find("Microsoft MS-DOS version 2.11") == std::string::npos ||
+      dos_text.find("A>") == std::string::npos ||
+      drive_a_current == nullptr ||
+      !drive_a_current->statusTip().contains("copower_dos_drive_a.flp") ||
+      current_hard_disk_1->isChecked() || current_hard_disk_2->isChecked()) {
+    std::cerr << "One-click P2093 CoPower MS-DOS boot did not reach A>.\n";
     return 1;
   }
   return 0;

@@ -31,6 +31,17 @@ class MainWindow : public QMainWindow {
   private:
     static constexpr double kBaseClockHz = 4'000'000.0;
     static constexpr qint64 kMaximumCatchUpNanoseconds = 100'000'000;
+    static constexpr std::size_t kMsDosApplicationImageCount = 2;
+    static constexpr qint64 kFastBootStageTimeoutMs = 60'000;
+
+    enum class FastBootState {
+      kIdle,
+      kWaitForCpmPrompt,
+      kWaitForMsDosDiskPrompt,
+      kWaitForDatePrompt,
+      kWaitForTimePrompt,
+      kWaitForDosPrompt,
+    };
 
   public:
     /** Creates the emulator window, menus, display, and paced run timer. */
@@ -84,6 +95,28 @@ class MainWindow : public QMainWindow {
     /** Mounts a disposable copy of the pristine CP/M system template. */
     void mount_bundled_system_floppy(std::size_t drive);
 
+    /** Mounts the P2093 CoPower CP/M boot disk used to launch MSBOOT. */
+    bool mount_bundled_copower_cpm_floppy(std::size_t drive);
+
+    /** Mounts the P2093 CoPower MS-DOS 2.11 disk after the MSBOOT prompt. */
+    bool mount_bundled_copower_dos_floppy(std::size_t drive);
+
+    /** Mounts one bundled P2093 CoPower MS-DOS application disk. */
+    void mount_bundled_msdos_application(std::size_t drive,
+                                         std::size_t application);
+
+    /** Installs P2093 CoPower and ejects incompatible blank hard disks. */
+    bool prepare_for_copower_floppy();
+
+    /** Starts the documented CP/M-to-MS-DOS P2093 boot sequence. */
+    void start_fast_boot_msdos();
+
+    /** Advances the one-click P2093 boot sequence when a prompt appears. */
+    void advance_fast_boot_msdos();
+
+    /** Ends the one-click boot sequence and restores its menu action. */
+    void finish_fast_boot_msdos(const QString& status);
+
     /** Mounts a disposable copy of the pristine ZORK template. */
     void mount_bundled_zork_floppy(std::size_t drive);
 
@@ -95,6 +128,9 @@ class MainWindow : public QMainWindow {
 
     /** Mounts the bundled compiled P2FILE development floppy. */
     void mount_bundled_p2file_floppy(std::size_t drive);
+
+    /** Mounts the bundled compiled P2EDIT development floppy. */
+    void mount_bundled_p2edit_floppy(std::size_t drive);
 
     /** Mounts a disposable blank 640 KiB data floppy. */
     void mount_bundled_blank_floppy(std::size_t drive);
@@ -131,18 +167,30 @@ class MainWindow : public QMainWindow {
     QTimer* timer_ = nullptr;
     std::array<QMenu*, 2> media_drive_menus_{};
     std::array<QAction*, 2> current_media_actions_{};
+    QAction* copower_action_ = nullptr;
+    QAction* fast_boot_msdos_action_ = nullptr;
     std::array<QAction*, 2> bundled_system_actions_{};
+    std::array<QAction*, 2> bundled_copower_cpm_actions_{};
+    std::array<QAction*, 2> bundled_copower_dos_actions_{};
+    std::array<std::array<QAction*, kMsDosApplicationImageCount>, 2>
+        bundled_msdos_application_actions_{};
     std::array<QAction*, 2> bundled_zork_actions_{};
     std::array<QAction*, 2> bundled_chess_actions_{};
     std::array<QAction*, 2> bundled_ipldump_actions_{};
+    std::array<QAction*, 2> bundled_p2edit_actions_{};
     std::array<QAction*, 2> bundled_p2file_actions_{};
     std::array<QAction*, 2> bundled_blank_actions_{};
     std::array<QAction*, 2> save_floppy_actions_{};
     std::array<QMenu*, 2> recent_floppy_menus_{};
     std::array<QString, 2> bundled_system_paths_{};
+    std::array<QString, 2> bundled_copower_cpm_paths_{};
+    std::array<QString, 2> bundled_copower_dos_paths_{};
+    std::array<std::array<QString, kMsDosApplicationImageCount>, 2>
+        bundled_msdos_application_paths_{};
     std::array<QString, 2> bundled_zork_paths_{};
     std::array<QString, 2> bundled_chess_paths_{};
     std::array<QString, 2> bundled_ipldump_paths_{};
+    std::array<QString, 2> bundled_p2edit_paths_{};
     std::array<QString, 2> bundled_p2file_paths_{};
     std::array<QString, 2> bundled_blank_paths_{};
     std::array<QLabel*, 2> media_status_labels_{};
@@ -165,6 +213,8 @@ class MainWindow : public QMainWindow {
     bool audio_enabled_ = true;
     QElapsedTimer execution_timer_;
     QElapsedTimer memory_panel_timer_;
+    QElapsedTimer fast_boot_stage_timer_;
+    FastBootState fast_boot_state_ = FastBootState::kIdle;
     double pending_t_states_ = 0.0;
     double speed_multiplier_ = 1.0;
     std::uint64_t terminal_revision_ = 0;

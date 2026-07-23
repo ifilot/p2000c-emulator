@@ -22,7 +22,13 @@ namespace {
 constexpr std::uint64_t kDefaultWaitCycles = 200'000'000;
 constexpr std::uint64_t kDefaultChunkCycles = 100'000;
 
-enum class ActionKind { kSend, kWaitFor, kRun };
+enum class ActionKind {
+  kSend,
+  kWaitFor,
+  kRun,
+  kSwapFloppyA,
+  kSwapFloppyB,
+};
 
 struct Action {
   ActionKind kind = ActionKind::kRun;
@@ -45,6 +51,7 @@ struct Options {
   std::uint64_t chunk_cycles = kDefaultChunkCycles;
   bool write_through = false;
   bool fast_storage = false;
+  bool copower = false;
   bool json = false;
   bool help = false;
 };
@@ -120,8 +127,8 @@ void print_usage(std::ostream& output) {
   output
       << "Usage: p2000c_cli --ipl FILE [MEDIA] [ACTIONS] [OPTIONS]\n"
       << "\nMedia (copied to temporary writable files by default):\n"
-      << "  --floppy-a FILE       Mount a 640 KiB FLP image in drive A\n"
-      << "  --floppy-b FILE       Mount a 640 KiB FLP image in drive B\n"
+      << "  --floppy-a FILE       Mount a 640 or 800 KiB FLP image in drive A\n"
+      << "  --floppy-b FILE       Mount a 640 or 800 KiB FLP image in drive B\n"
       << "  --hard-disk-0 FILE    Mount a 10 MiB HDA image as physical disk 0\n"
       << "  --hard-disk-1 FILE    Mount a 10 MiB HDA image as physical disk 1\n"
       << "  --write-through       Apply guest writes directly to those files\n"
@@ -131,12 +138,15 @@ void print_usage(std::ostream& output) {
          " \\xNN, \\\\)\n"
       << "  --send-file FILE      Queue every byte from FILE as keyboard input\n"
       << "  --run CYCLES          Run for a fixed number of Z80 T-states\n"
+      << "  --swap-floppy-a FILE  Replace drive A media at this action point\n"
+      << "  --swap-floppy-b FILE  Replace drive B media at this action point\n"
       << "\nOutput and execution:\n"
       << "  --output text|json    Select screen text (default) or structured JSON\n"
       << "  --dump-memory A:L     Include L bytes starting at address A\n"
       << "  --wait-cycles N       Per-wait timeout (default 200000000)\n"
       << "  --chunk-cycles N      Wait polling interval (default 100000)\n"
       << "  --fast-storage        Bypass emulated floppy latency\n"
+      << "  --copower             Install the 512 KiB Philips CoPower board\n"
       << "  --help                Show this help\n"
       << "\nNumbers accept decimal or a 0x hexadecimal prefix. A wait that times out\n"
       << "still emits the final screen and returns exit status 3.\n";
@@ -271,6 +281,8 @@ Options parse_options(int argc, char* argv[]) {
       options.write_through = true;
     } else if (argument == "--fast-storage") {
       options.fast_storage = true;
+    } else if (argument == "--copower") {
+      options.copower = true;
     } else if (argument == "--wait-for") {
       options.actions.push_back(
           {ActionKind::kWaitFor,
@@ -283,6 +295,14 @@ Options parse_options(int argc, char* argv[]) {
       options.actions.push_back(
           {ActionKind::kSend,
            read_file(require_value(index, argc, argv, argument)), 0});
+    } else if (argument == "--swap-floppy-a") {
+      options.actions.push_back(
+          {ActionKind::kSwapFloppyA,
+           require_value(index, argc, argv, argument), 0});
+    } else if (argument == "--swap-floppy-b") {
+      options.actions.push_back(
+          {ActionKind::kSwapFloppyB,
+           require_value(index, argc, argv, argument), 0});
     } else if (argument == "--run") {
       options.actions.push_back(
           {ActionKind::kRun, "",
@@ -418,6 +438,16 @@ void print_json(const p2000c::P2000cMachine& machine,
   std::cout << "  \"cycles\": " << machine.cycles() << ",\n"
             << "  \"program_counter\": "
             << json_string(hex_word(machine.program_counter())) << ",\n"
+            << "  \"copower\": {\"enabled\": "
+            << (machine.copower_enabled() ? "true" : "false")
+            << ", \"faulted\": "
+            << (machine.copower_faulted() ? "true" : "false");
+  if (machine.copower_enabled()) {
+    const auto [segment, offset] = machine.copower_program_counter();
+    std::cout << ", \"program_counter\": "
+              << json_string(hex_word(segment) + ":" + hex_word(offset));
+  }
+  std::cout << "},\n"
             << "  \"cursor\": {\"row\": " << terminal.cursor_row()
             << ", \"column\": " << terminal.cursor_column()
             << ", \"visible\": "
@@ -470,7 +500,13 @@ void print_text(const p2000c::P2000cMachine& machine,
   std::cout << "PC=" << hex_word(machine.program_counter())
             << " cycles=" << machine.cycles()
             << " graphics="
-            << graphics_mode_name(machine.terminal().graphics_mode()) << '\n';
+            << graphics_mode_name(machine.terminal().graphics_mode());
+  if (machine.copower_enabled()) {
+    const auto [segment, offset] = machine.copower_program_counter();
+    std::cout << " copower=" << hex_word(segment) << ':' << hex_word(offset)
+              << (machine.copower_faulted() ? " faulted" : "");
+  }
+  std::cout << '\n';
   for (const MemoryDump& dump : options.memory_dumps) {
     std::cout << "Memory " << hex_word(dump.address) << ':';
     for (std::size_t offset = 0; offset < dump.length; ++offset) {
@@ -493,6 +529,7 @@ int run(const Options& options) {
   TemporaryMedia temporary_media;
   p2000c::P2000cMachine machine;
   machine.set_storage_delays_enabled(!options.fast_storage);
+  machine.set_copower_enabled(options.copower);
   std::string error;
   if (!machine.load_ipl_rom(*options.ipl, &error)) {
     throw std::runtime_error(error);
@@ -524,6 +561,7 @@ int run(const Options& options) {
 
   std::string status = "ok";
   std::string message;
+  std::size_t media_swap_count = 0;
   for (const Action& action : options.actions) {
     if (action.kind == ActionKind::kSend) {
       for (const unsigned char byte : action.text) {
@@ -531,6 +569,19 @@ int run(const Options& options) {
       }
     } else if (action.kind == ActionKind::kRun) {
       machine.run_for(action.cycles);
+    } else if (action.kind == ActionKind::kSwapFloppyA ||
+               action.kind == ActionKind::kSwapFloppyB) {
+      const std::size_t drive =
+          action.kind == ActionKind::kSwapFloppyA ? 0 : 1;
+      const std::filesystem::path source(action.text);
+      const std::filesystem::path path = media_path(
+          source, options.write_through, temporary_media,
+          "floppy-swap-" + std::to_string(media_swap_count++));
+      const bool mounted = drive == 0 ? machine.mount_floppy_a(path, &error)
+                                      : machine.mount_floppy_b(path, &error);
+      if (!mounted) {
+        throw std::runtime_error(error);
+      }
     } else if (!wait_for_text(machine, action.text, options.wait_cycles,
                               options.chunk_cycles)) {
       status = "timeout";

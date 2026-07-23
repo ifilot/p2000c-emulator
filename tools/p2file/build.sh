@@ -4,12 +4,12 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
-output=${1:-"${repo_root}/images/p2file.flp"}
+output=${1:-"${repo_root}/images/cpm/p2file.flp"}
 
 build_dir="${repo_root}/build"
 cli=${P2000C_CLI:-}
 ipl="${repo_root}/tools/ipldump/IPLDUMP.BIN"
-system_disk="${repo_root}/images/system.flp"
+system_disk="${repo_root}/images/cpm/system.flp"
 asm_com="${repo_root}/media/files/core/ASM.COM"
 load_com="${repo_root}/media/files/core/LOAD.COM"
 source_asm="${script_dir}/P2FILE.ASM"
@@ -52,7 +52,7 @@ trap 'rm -rf -- "${work_dir}"' EXIT
 work_disk="${work_dir}/p2file.flp"
 build_log="${work_dir}/p2file-build.log"
 
-PYTHONPATH="${media_module_dir}" python3 -c \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="${media_module_dir}" python3 -c \
   'from pathlib import Path
 import sys
 from build_media import build_floppy

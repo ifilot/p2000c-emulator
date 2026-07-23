@@ -150,19 +150,22 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     arguments = parser.parse_args()
 
-    arguments.output.mkdir(parents=True, exist_ok=True)
+    cpm_output = arguments.output / "cpm"
+    hard_disk_output = arguments.output / "hard-disks"
+    cpm_output.mkdir(parents=True, exist_ok=True)
+    hard_disk_output.mkdir(parents=True, exist_ok=True)
     system = arguments.system.read_bytes()
     build_floppy(
-        arguments.output / "system.flp", _ordered_core(arguments.core), system
+        cpm_output / "system.flp", _ordered_core(arguments.core), system
     )
     build_floppy(
-        arguments.output / "zork.flp",
+        cpm_output / "zork.flp",
         [arguments.zork / "ZORK1.COM", arguments.zork / "ZORK1.DAT"],
         None,
     )
-    build_floppy(arguments.output / "chess.flp", [arguments.chess], None)
+    build_floppy(cpm_output / "chess.flp", [arguments.chess], None)
     build_floppy(
-        arguments.output / "ipldump.flp",
+        cpm_output / "ipldump.flp",
         [
             arguments.core / "ASM.COM",
             arguments.core / "LOAD.COM",
@@ -170,7 +173,9 @@ def main() -> None:
         ],
         None,
     )
-    (arguments.output / "blank.hda").write_bytes(bytes([FILL]) * HARD_DISK_SIZE)
+    (hard_disk_output / "blank.hda").write_bytes(
+        bytes([FILL]) * HARD_DISK_SIZE
+    )
 
 
 if __name__ == "__main__":

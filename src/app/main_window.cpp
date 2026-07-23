@@ -45,6 +45,7 @@
 #include <numeric>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "app/display_widget.h"
 #include "app/hardware_audio.h"
@@ -53,6 +54,23 @@
 namespace p2000c {
 
 namespace {
+
+struct MsDosApplicationImage {
+  const char* label;
+  const char* resource;
+  const char* session_stem;
+  const char* object_stem;
+  const char* display_name;
+};
+
+constexpr std::array<MsDosApplicationImage, 2> kMsDosApplicationImages = {{
+    {"Microsoft &MASM 3.01", ":/images/msdos/applications/masm-3.01.flp",
+     "masm_3_01", "Masm301", "Microsoft MASM 3.01"},
+    {"Borland Turbo &C 2.01 (command line)",
+     ":/images/msdos/applications/turbo-c-2.01-cli.flp",
+     "turbo_c_2_01_cli", "TurboC201Cli",
+     "Borland Turbo C 2.01 command-line toolchain"},
+}};
 
 void apply_p2000c_theme() {
   QPalette palette;
@@ -1032,10 +1050,12 @@ void MainWindow::create_menus() {
   };
 
   QMenu* machine_menu = menuBar()->addMenu("&Machine");
+  machine_menu->setObjectName("machineMenu");
   QAction* load_rom = machine_menu->addAction("Load &IPL ROM...");
   connect(load_rom, &QAction::triggered, this, &MainWindow::load_ipl_rom);
   QAction* reset = machine_menu->addAction("&Reset");
   connect(reset, &QAction::triggered, this, [this]() {
+    finish_fast_boot_msdos({});
     machine_.reset();
     pending_t_states_ = 0.0;
     execution_timer_.restart();
@@ -1043,6 +1063,15 @@ void MainWindow::create_menus() {
     refresh_screen();
     refresh_memory_panel();
   });
+  QAction* fast_boot =
+      machine_menu->addAction("Fast Boot P2093 CoPower MS-&DOS 2.11");
+  fast_boot->setObjectName("fastBootMsDosAction");
+  fast_boot->setToolTip(
+      "Boot the P2093 CP/M disk, run MSBOOT, insert the MS-DOS disk, "
+      "and accept the date and time prompts automatically.");
+  fast_boot_msdos_action_ = fast_boot;
+  connect(fast_boot, &QAction::triggered, this,
+          &MainWindow::start_fast_boot_msdos);
   QMenu* speed_menu = machine_menu->addMenu("Emulation &Speed");
   auto* speed_group = new QActionGroup(this);
   speed_group->setExclusive(true);
@@ -1101,8 +1130,17 @@ void MainWindow::create_menus() {
         QString("recentFloppy%1Menu").arg(drive_letter));
     drive_menu->addSeparator();
 
+    QMenu* cpm_images = drive_menu->addMenu("&CP/M Images");
+    cpm_images->setObjectName(
+        QString("bundledCpmFloppies%1Menu").arg(drive_letter));
+    cpm_images->setToolTipsVisible(true);
+    QMenu* msdos_images = drive_menu->addMenu("MS-&DOS Images");
+    msdos_images->setObjectName(
+        QString("bundledMsDosFloppies%1Menu").arg(drive_letter));
+    msdos_images->setToolTipsVisible(true);
+
     QAction* system_floppy =
-        drive_menu->addAction("Use CP/M 2.2 &System Floppy");
+        cpm_images->addAction("CP/M 2.2 &System Floppy");
     system_floppy->setObjectName(
         QString("mountSystemFloppy%1Action").arg(drive_letter));
     system_floppy->setCheckable(true);
@@ -1110,7 +1148,55 @@ void MainWindow::create_menus() {
     connect(system_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_system_floppy(drive); });
 
-    QAction* zork_floppy = drive_menu->addAction("Use &ZORK Data Floppy");
+    QAction* copower_cpm_floppy =
+        cpm_images->addAction("P2093 CoPower &Boot Floppy");
+    copower_cpm_floppy->setObjectName(
+        QString("mountCoPowerCpmFloppy%1Action").arg(drive_letter));
+    copower_cpm_floppy->setCheckable(true);
+    copower_cpm_floppy->setToolTip(
+        "Boot this disk with the P2093 CoPower board installed, then run "
+        "MSBOOT.");
+    bundled_copower_cpm_actions_[drive] = copower_cpm_floppy;
+    connect(copower_cpm_floppy, &QAction::triggered, this, [this, drive]() {
+      mount_bundled_copower_cpm_floppy(drive);
+    });
+
+    QAction* copower_dos_floppy =
+        msdos_images->addAction("P2093 CoPower MS-&DOS 2.11");
+    copower_dos_floppy->setObjectName(
+        QString("mountCoPowerDosFloppy%1Action").arg(drive_letter));
+    copower_dos_floppy->setCheckable(true);
+    copower_dos_floppy->setToolTip(
+        "Select this disk when MSBOOT asks for the MS-DOS disk.");
+    bundled_copower_dos_actions_[drive] = copower_dos_floppy;
+    connect(copower_dos_floppy, &QAction::triggered, this, [this, drive]() {
+      mount_bundled_copower_dos_floppy(drive);
+    });
+
+    for (std::size_t application = 0;
+         application < kMsDosApplicationImages.size(); ++application) {
+      const MsDosApplicationImage& image =
+          kMsDosApplicationImages[application];
+      if (!QFile::exists(image.resource)) {
+        continue;
+      }
+      QAction* action = msdos_images->addAction(image.label);
+      action->setObjectName(
+          QString("mount%1Floppy%2Action")
+              .arg(image.object_stem)
+              .arg(drive_letter));
+      action->setCheckable(true);
+      action->setToolTip(
+          "Mount a writable session copy; the P2093 CoPower board is installed "
+          "automatically.");
+      bundled_msdos_application_actions_[drive][application] = action;
+      connect(action, &QAction::triggered, this,
+              [this, drive, application]() {
+                mount_bundled_msdos_application(drive, application);
+              });
+    }
+
+    QAction* zork_floppy = cpm_images->addAction("&ZORK Data Floppy");
     zork_floppy->setObjectName(
         QString("mountZorkFloppy%1Action").arg(drive_letter));
     zork_floppy->setCheckable(true);
@@ -1118,7 +1204,7 @@ void MainWindow::create_menus() {
     connect(zork_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_zork_floppy(drive); });
 
-    QAction* chess_floppy = drive_menu->addAction("Use &CHESS Data Floppy");
+    QAction* chess_floppy = cpm_images->addAction("&CHESS Data Floppy");
     chess_floppy->setObjectName(
         QString("mountChessFloppy%1Action").arg(drive_letter));
     chess_floppy->setCheckable(true);
@@ -1127,7 +1213,7 @@ void MainWindow::create_menus() {
             [this, drive]() { mount_bundled_chess_floppy(drive); });
 
     QAction* ipldump_floppy =
-        drive_menu->addAction("Use IPL &Dump Toolchain Floppy");
+        cpm_images->addAction("IPL &Dump Toolchain Floppy");
     ipldump_floppy->setObjectName(
         QString("mountIplDumpFloppy%1Action").arg(drive_letter));
     ipldump_floppy->setCheckable(true);
@@ -1135,8 +1221,17 @@ void MainWindow::create_menus() {
     connect(ipldump_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_ipldump_floppy(drive); });
 
+    QAction* p2edit_floppy =
+        cpm_images->addAction("P2&EDIT Development Floppy");
+    p2edit_floppy->setObjectName(
+        QString("mountP2EditFloppy%1Action").arg(drive_letter));
+    p2edit_floppy->setCheckable(true);
+    bundled_p2edit_actions_[drive] = p2edit_floppy;
+    connect(p2edit_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_p2edit_floppy(drive); });
+
     QAction* p2file_floppy =
-        drive_menu->addAction("Use &P2FILE Development Floppy");
+        cpm_images->addAction("&P2FILE Development Floppy");
     p2file_floppy->setObjectName(
         QString("mountP2FileFloppy%1Action").arg(drive_letter));
     p2file_floppy->setCheckable(true);
@@ -1145,7 +1240,7 @@ void MainWindow::create_menus() {
             [this, drive]() { mount_bundled_p2file_floppy(drive); });
 
     QAction* blank_floppy =
-        drive_menu->addAction("Use &Blank 640 KiB Data Floppy");
+        cpm_images->addAction("&Blank 640 KiB Data Floppy");
     blank_floppy->setObjectName(
         QString("mountBlankFloppy%1Action").arg(drive_letter));
     blank_floppy->setCheckable(true);
@@ -1258,6 +1353,28 @@ void MainWindow::create_menus() {
   volume->setObjectName("hardwareSoundVolumeAction");
   connect(volume, &QAction::triggered, this,
           &MainWindow::open_audio_volume_settings);
+  QAction* copower =
+      settings_menu->addAction("Install 512 KiB P2093 &CoPower Board");
+  copower->setObjectName("installCoPowerBoardAction");
+  copower->setCheckable(true);
+  copower_action_ = copower;
+  copower->setChecked(
+      QSettings().value("machine/copowerEnabled", false).toBool());
+  machine_.set_copower_enabled(copower->isChecked());
+  connect(copower, &QAction::toggled, this, [this](bool enabled) {
+    if (!enabled) {
+      finish_fast_boot_msdos({});
+    }
+    machine_.set_copower_enabled(enabled);
+    machine_.reset();
+    pending_t_states_ = 0.0;
+    execution_timer_.restart();
+    QSettings().setValue("machine/copowerEnabled", enabled);
+    statusBar()->showMessage(
+        enabled ? "512 KiB P2093 CoPower board installed; machine reset."
+                : "P2093 CoPower board removed; machine reset.",
+        4000);
+  });
   QAction* delays =
       settings_menu->addAction("Enable Floppy Drive &Delays");
   delays->setObjectName("enableHardwareDelaysAction");
@@ -1278,9 +1395,11 @@ void MainWindow::create_menus() {
       const char* filename;
       const char* object_name;
   };
-  constexpr std::array<ManualEntry, 3> kManuals = {{
+  constexpr std::array<ManualEntry, 4> kManuals = {{
       {"P2000C System Reference and Service Manual",
        "P2000C-SystemRefServiceManual.pdf", "systemReferenceManualAction"},
+      {"P2093 8088 CoPower Board Reference Manual",
+       "P2093_CoPowerBoard.pdf", "copowerReferenceManualAction"},
       {"P2519 CP/M User Guide", "P2519CPM_UserGuide.pdf",
        "cpmUserGuideAction"},
       {"P2519 CP/M Reference Manual", "P2519_CPM_Reference.pdf",
@@ -1337,7 +1456,11 @@ void MainWindow::refresh_screen() {
                            : "IPL ROM: MISSING - LOAD VIA MACHINE MENU");
   if (machine_.floppy_a().has_value()) {
     display_->write_text(2, 9, "FLOPPY A: MOUNTED READ/WRITE");
-    display_->write_text(2, 10, "RAW CAPACITY: 640 KIB");
+    display_->write_text(
+        2, 10,
+        machine_.floppy_a()->data().size() == RawDiskImage::kDosFloppySize
+            ? "RAW CAPACITY: 800 KIB"
+            : "RAW CAPACITY: 640 KIB");
   } else {
     display_->write_text(2, 9, "FLOPPY A: NOT MOUNTED");
   }
@@ -1515,9 +1638,17 @@ void MainWindow::refresh_media_indicators() {
           QString("No image is mounted in floppy drive %1.").arg(drive_letter));
       refresh_drive_position(false, drive);
       bundled_system_actions_[drive]->setChecked(false);
+      bundled_copower_cpm_actions_[drive]->setChecked(false);
+      bundled_copower_dos_actions_[drive]->setChecked(false);
+      for (QAction* action : bundled_msdos_application_actions_[drive]) {
+        if (action != nullptr) {
+          action->setChecked(false);
+        }
+      }
       bundled_zork_actions_[drive]->setChecked(false);
       bundled_chess_actions_[drive]->setChecked(false);
       bundled_ipldump_actions_[drive]->setChecked(false);
+      bundled_p2edit_actions_[drive]->setChecked(false);
       bundled_p2file_actions_[drive]->setChecked(false);
       bundled_blank_actions_[drive]->setChecked(false);
       continue;
@@ -1546,14 +1677,39 @@ void MainWindow::refresh_media_indicators() {
     refresh_drive_position(false, drive);
 
     const QString& system_path = bundled_system_paths_[drive];
+    const QString& copower_cpm_path = bundled_copower_cpm_paths_[drive];
+    const QString& copower_dos_path = bundled_copower_dos_paths_[drive];
     const QString& zork_path = bundled_zork_paths_[drive];
     const QString& chess_path = bundled_chess_paths_[drive];
     const QString& ipldump_path = bundled_ipldump_paths_[drive];
+    const QString& p2edit_path = bundled_p2edit_paths_[drive];
     const QString& p2file_path = bundled_p2file_paths_[drive];
     const QString& blank_path = bundled_blank_paths_[drive];
     bundled_system_actions_[drive]->setChecked(
         !system_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(system_path).absoluteFilePath());
+    bundled_copower_cpm_actions_[drive]->setChecked(
+        !copower_cpm_path.isEmpty() &&
+        QFileInfo(full_path).absoluteFilePath() ==
+            QFileInfo(copower_cpm_path).absoluteFilePath());
+    bundled_copower_dos_actions_[drive]->setChecked(
+        !copower_dos_path.isEmpty() &&
+        QFileInfo(full_path).absoluteFilePath() ==
+            QFileInfo(copower_dos_path).absoluteFilePath());
+    for (std::size_t application = 0;
+         application < kMsDosApplicationImages.size(); ++application) {
+      QAction* action =
+          bundled_msdos_application_actions_[drive][application];
+      if (action == nullptr) {
+        continue;
+      }
+      const QString& application_path =
+          bundled_msdos_application_paths_[drive][application];
+      action->setChecked(
+          !application_path.isEmpty() &&
+          QFileInfo(full_path).absoluteFilePath() ==
+              QFileInfo(application_path).absoluteFilePath());
+    }
     bundled_zork_actions_[drive]->setChecked(
         !zork_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(zork_path).absoluteFilePath());
@@ -1563,6 +1719,9 @@ void MainWindow::refresh_media_indicators() {
     bundled_ipldump_actions_[drive]->setChecked(
         !ipldump_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(ipldump_path).absoluteFilePath());
+    bundled_p2edit_actions_[drive]->setChecked(
+        !p2edit_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(p2edit_path).absoluteFilePath());
     bundled_p2file_actions_[drive]->setChecked(
         !p2file_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(p2file_path).absoluteFilePath());
@@ -1626,7 +1785,7 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/system.flp", media_session_.path(),
+      ":/images/cpm/system.flp", media_session_.path(),
       QString("system_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare bundled floppy", error);
@@ -1652,11 +1811,246 @@ void MainWindow::mount_bundled_system_floppy(std::size_t drive) {
   }
 }
 
+bool MainWindow::prepare_for_copower_floppy() {
+  if (!machine_.copower_enabled() && copower_action_ != nullptr) {
+    copower_action_->setChecked(true);
+  }
+
+  bool ejected_blank_hard_disk = false;
+  for (std::size_t drive = 0; drive < 2; ++drive) {
+    const std::optional<RawDiskImage>& image = machine_.hard_disk(drive);
+    if (!image.has_value() || temporary_hard_disk_paths_[drive].isEmpty()) {
+      continue;
+    }
+    const QString mounted_path = qstring_path(image->path());
+    if (QFileInfo(mounted_path).absoluteFilePath() !=
+        QFileInfo(temporary_hard_disk_paths_[drive]).absoluteFilePath()) {
+      continue;
+    }
+    machine_.unmount_hard_disk(drive);
+    temporary_hard_disk_paths_[drive].clear();
+    save_hard_disk_actions_[drive]->setEnabled(false);
+    ejected_blank_hard_disk = true;
+  }
+  if (ejected_blank_hard_disk) {
+    refresh_media_indicators();
+  }
+  return ejected_blank_hard_disk;
+}
+
+bool MainWindow::mount_bundled_copower_cpm_floppy(std::size_t drive) {
+  const bool ejected_blank_hard_disk = prepare_for_copower_floppy();
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/cpm/copower-boot.flp", media_session_.path(),
+      QString("copower_cpm_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare P2093 CoPower CP/M floppy",
+                          error);
+    refresh_media_indicators();
+    return false;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_copower_cpm_paths_[drive] = *path;
+    refresh_media_indicators();
+    if (drive == 0) {
+      machine_.reset();
+      pending_t_states_ = 0.0;
+      execution_timer_.restart();
+      refresh_media_indicators();
+      refresh_screen();
+    }
+    statusBar()->showMessage(
+        QString(
+            "P2093 CoPower CP/M boot floppy mounted in drive %1. Run MSBOOT, "
+            "then select the P2093 CoPower MS-DOS floppy when prompted.%2")
+            .arg(drive_letter)
+            .arg(ejected_blank_hard_disk
+                     ? " Default blank hard disks were ejected."
+                     : ""));
+    return true;
+  }
+  return false;
+}
+
+bool MainWindow::mount_bundled_copower_dos_floppy(std::size_t drive) {
+  const bool ejected_blank_hard_disk = prepare_for_copower_floppy();
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/msdos/copower-msdos-2.11.flp", media_session_.path(),
+      QString("copower_dos_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare P2093 CoPower MS-DOS floppy",
+                          error);
+    refresh_media_indicators();
+    return false;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_copower_dos_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("P2093 CoPower MS-DOS 2.11 floppy mounted in drive %1.%2")
+            .arg(drive_letter)
+            .arg(ejected_blank_hard_disk
+                     ? " Default blank hard disks were ejected."
+                     : ""));
+    return true;
+  }
+  return false;
+}
+
+void MainWindow::start_fast_boot_msdos() {
+  finish_fast_boot_msdos({});
+  if (fast_boot_msdos_action_ != nullptr) {
+    fast_boot_msdos_action_->setEnabled(false);
+  }
+  if (!mount_bundled_copower_cpm_floppy(0)) {
+    finish_fast_boot_msdos(
+        "P2093 CoPower MS-DOS fast boot could not mount its CP/M disk.");
+    return;
+  }
+
+  fast_boot_state_ = FastBootState::kWaitForCpmPrompt;
+  fast_boot_stage_timer_.restart();
+  statusBar()->showMessage(
+      "P2093 CoPower fast boot: starting CP/M and waiting for A>...");
+  display_->setFocus();
+}
+
+void MainWindow::advance_fast_boot_msdos() {
+  if (fast_boot_state_ == FastBootState::kIdle) {
+    return;
+  }
+  if (fast_boot_stage_timer_.elapsed() >= kFastBootStageTimeoutMs) {
+    finish_fast_boot_msdos(
+        "P2093 CoPower MS-DOS fast boot timed out; the current machine state "
+        "was preserved.");
+    return;
+  }
+
+  const Terminal::Screen& screen = machine_.terminal().screen();
+  const std::string_view text(reinterpret_cast<const char*>(screen.data()),
+                              screen.size());
+  const auto contains = [&](std::string_view prompt) {
+    return text.find(prompt) != std::string_view::npos;
+  };
+  const auto send = [this](std::string_view bytes) {
+    for (const char byte : bytes) {
+      machine_.queue_key(static_cast<std::uint8_t>(byte));
+    }
+  };
+
+  switch (fast_boot_state_) {
+    case FastBootState::kWaitForCpmPrompt:
+      if (contains("A>")) {
+        send("MSBOOT\r");
+        fast_boot_state_ = FastBootState::kWaitForMsDosDiskPrompt;
+        fast_boot_stage_timer_.restart();
+        statusBar()->showMessage(
+            "P2093 CoPower fast boot: running MSBOOT...");
+      }
+      break;
+    case FastBootState::kWaitForMsDosDiskPrompt:
+      if (contains("Insert MS-DOS Disk")) {
+        if (!mount_bundled_copower_dos_floppy(0)) {
+          finish_fast_boot_msdos(
+              "P2093 CoPower MS-DOS fast boot could not mount its MS-DOS "
+              "disk.");
+          break;
+        }
+        send("\r");
+        fast_boot_state_ = FastBootState::kWaitForDatePrompt;
+        fast_boot_stage_timer_.restart();
+        statusBar()->showMessage(
+            "P2093 CoPower fast boot: MS-DOS disk inserted...");
+      }
+      break;
+    case FastBootState::kWaitForDatePrompt:
+      if (contains("Enter new date:")) {
+        send("\r");
+        fast_boot_state_ = FastBootState::kWaitForTimePrompt;
+        fast_boot_stage_timer_.restart();
+        statusBar()->showMessage(
+            "P2093 CoPower fast boot: accepting the default date...");
+      }
+      break;
+    case FastBootState::kWaitForTimePrompt:
+      if (contains("Enter new time:")) {
+        send("\r");
+        fast_boot_state_ = FastBootState::kWaitForDosPrompt;
+        fast_boot_stage_timer_.restart();
+        statusBar()->showMessage(
+            "P2093 CoPower fast boot: accepting the default time...");
+      }
+      break;
+    case FastBootState::kWaitForDosPrompt:
+      if (contains("A>")) {
+        finish_fast_boot_msdos(
+            "P2093 CoPower MS-DOS 2.11 ready in drive A.");
+        display_->setFocus();
+      }
+      break;
+    case FastBootState::kIdle:
+      break;
+  }
+}
+
+void MainWindow::finish_fast_boot_msdos(const QString& status) {
+  fast_boot_state_ = FastBootState::kIdle;
+  fast_boot_stage_timer_.invalidate();
+  if (fast_boot_msdos_action_ != nullptr) {
+    fast_boot_msdos_action_->setEnabled(true);
+  }
+  if (!status.isEmpty()) {
+    statusBar()->showMessage(status, 8000);
+  }
+}
+
+void MainWindow::mount_bundled_msdos_application(std::size_t drive,
+                                                  std::size_t application) {
+  if (application >= kMsDosApplicationImages.size()) {
+    return;
+  }
+  const MsDosApplicationImage& image = kMsDosApplicationImages[application];
+  const bool ejected_blank_hard_disk = prepare_for_copower_floppy();
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = temporary_resource_copy(
+      image.resource, media_session_.path(),
+      QString("%1_drive_%2.flp")
+          .arg(image.session_stem)
+          .arg(drive_letter.toLower()),
+      &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(
+        this, QString("Cannot prepare %1 floppy").arg(image.display_name),
+        error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_msdos_application_paths_[drive][application] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("%1 floppy mounted in drive %2.%3")
+            .arg(image.display_name)
+            .arg(drive_letter)
+            .arg(ejected_blank_hard_disk
+                     ? " Default blank hard disks were ejected."
+                     : ""));
+  }
+}
+
 void MainWindow::mount_bundled_zork_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/zork.flp", media_session_.path(),
+      ":/images/cpm/zork.flp", media_session_.path(),
       QString("zork_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare ZORK floppy", error);
@@ -1676,7 +2070,7 @@ void MainWindow::mount_bundled_chess_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/chess.flp", media_session_.path(),
+      ":/images/cpm/chess.flp", media_session_.path(),
       QString("chess_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare CHESS floppy", error);
@@ -1696,7 +2090,7 @@ void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/ipldump.flp", media_session_.path(),
+      ":/images/cpm/ipldump.flp", media_session_.path(),
       QString("ipldump_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare IPL dump floppy", error);
@@ -1717,7 +2111,7 @@ void MainWindow::mount_bundled_p2file_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/p2file.flp", media_session_.path(),
+      ":/images/cpm/p2file.flp", media_session_.path(),
       QString("p2file_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare P2FILE floppy", error);
@@ -1730,6 +2124,27 @@ void MainWindow::mount_bundled_p2file_floppy(std::size_t drive) {
     refresh_media_indicators();
     statusBar()->showMessage(
         QString("P2FILE development floppy mounted in drive %1.")
+            .arg(drive_letter));
+  }
+}
+
+void MainWindow::mount_bundled_p2edit_floppy(std::size_t drive) {
+  QString error;
+  const QChar drive_letter = drive == 0 ? 'A' : 'B';
+  const std::optional<QString> path = temporary_resource_copy(
+      ":/images/cpm/p2edit.flp", media_session_.path(),
+      QString("p2edit_drive_%1.flp").arg(drive_letter.toLower()), &error);
+  if (!path.has_value()) {
+    QMessageBox::critical(this, "Cannot prepare P2EDIT floppy", error);
+    refresh_media_indicators();
+    return;
+  }
+  if (mount_floppy(filesystem_path(*path), drive)) {
+    temporary_floppy_paths_[drive] = *path;
+    bundled_p2edit_paths_[drive] = *path;
+    refresh_media_indicators();
+    statusBar()->showMessage(
+        QString("P2EDIT development floppy mounted in drive %1.")
             .arg(drive_letter));
   }
 }
@@ -1759,7 +2174,7 @@ void MainWindow::mount_bundled_blank_floppy(std::size_t drive) {
 void MainWindow::mount_bundled_hard_disk(std::size_t drive) {
   QString error;
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/blank.hda", media_session_.path(),
+      ":/images/hard-disks/blank.hda", media_session_.path(),
       QString("hard_disk_%1.hda").arg(drive + 1), &error);
   if (!path.has_value()) {
     QMessageBox::critical(this, "Cannot prepare default hard disk", error);
@@ -1904,39 +2319,55 @@ void MainWindow::open_about() {
           "manuals, firmware, character data, disk images, and programs inside "
           "those images retain separate rights; see <i>Third-party and asset "
           "notices</i> for the full disclosure.</p>")
-          .arg(P2000C_VERSION, qVersion()));
+          .arg(QApplication::applicationVersion(), qVersion()));
   tabs->addTab(overview, "About");
 
   auto* notices = new QTextBrowser(tabs);
   notices->setObjectName("aboutThirdPartyNotices");
   notices->setOpenExternalLinks(true);
+  QString notices_markdown;
   QFile notices_file(":/THIRD_PARTY.md");
   if (notices_file.open(QIODevice::ReadOnly)) {
-    notices->setMarkdown(QString::fromUtf8(notices_file.readAll()));
+    notices_markdown = QString::fromUtf8(notices_file.readAll());
   }
-  tabs->addTab(notices, "Third-party and asset notices");
 
-  auto* third_party_licenses = new QTextBrowser(tabs);
-  third_party_licenses->setObjectName("aboutThirdPartyLicenses");
-  QString license_notices;
-  const std::array<std::pair<QString, QString>, 2> third_party_files = {{
-      {"superzazu/z80 — MIT", ":/third_party/superzazu_z80/LICENSE"},
+  struct ThirdPartyLicenseFile {
+    QString heading;
+    QString path;
+    QString attribution;
+  };
+  const std::array<ThirdPartyLicenseFile, 3> third_party_files = {{
+      {"superzazu/z80 — MIT", ":/third_party/superzazu_z80/LICENSE", {}},
+      {"blink16/86sim 8086 interpreter — ISC",
+       ":/third_party/blink16_8086/LICENSE",
+       "Imported from ghaerr/blink16 commit "
+       "162d824f782fe53cd6e1608b7f99cdcc09388abb.\n"
+       "Upstream lineage: original emulator from Andrew Jenner's reenigne "
+       "project; DOS enhancements by TK Chia; ELKS support, substantial "
+       "rewrite, and disassembler work by Greg Haerr."},
       {"MAME floppy samples — BSD-3-Clause",
-       ":/audio/LICENSE-MAME-SAMPLES.txt"},
+       ":/audio/LICENSE-MAME-SAMPLES.txt", {}},
   }};
-  for (const auto& [heading, path] : third_party_files) {
-    QFile file(path);
-    license_notices += "====================\n" + heading +
-                       "\n====================\n\n";
-    if (file.open(QIODevice::ReadOnly)) {
-      license_notices += QString::fromUtf8(file.readAll());
-    } else {
-      license_notices += "License notice unavailable.";
+  notices_markdown += "\n\n# Full third-party license texts\n\n";
+  for (const ThirdPartyLicenseFile& license_file : third_party_files) {
+    QFile file(license_file.path);
+    notices_markdown += "## " + license_file.heading + "\n\n";
+    if (!license_file.attribution.isEmpty()) {
+      notices_markdown += license_file.attribution + "\n\n";
     }
-    license_notices += "\n\n";
+    if (file.open(QIODevice::ReadOnly)) {
+      QString license_text = QString::fromUtf8(file.readAll());
+      license_text.replace("\r\n", "\n");
+      license_text.replace('\r', '\n');
+      license_text.replace('\n', "\n    ");
+      notices_markdown += "    " + license_text;
+    } else {
+      notices_markdown += "*License notice unavailable.*";
+    }
+    notices_markdown += "\n\n";
   }
-  third_party_licenses->setPlainText(license_notices);
-  tabs->addTab(third_party_licenses, "Third-party licenses");
+  notices->setMarkdown(notices_markdown);
+  tabs->addTab(notices, "Third-party notices and licenses");
 
   auto* license = new QTextBrowser(tabs);
   license->setObjectName("aboutLicenseText");
@@ -2016,6 +2447,7 @@ void MainWindow::run_emulation_slice() {
                          machine_.terminal().cursor_row(),
                          machine_.terminal().cursor_visible());
   }
+  advance_fast_boot_msdos();
   if (!memory_panel_timer_.isValid() ||
       memory_panel_timer_.elapsed() >= 100) {
     refresh_memory_panel();
