@@ -32,7 +32,11 @@ The graphical emulator exposes the bundled image under **Media > Drive A/B >
 CP/M Images > P2FILE Development Floppy**. Selecting it mounts a writable
 session copy, leaving the bundled template unchanged.
 
-The left and right panels initially show A: and B:. Available keys are:
+The left and right panels initially show A: and B:. P2FILE reports each drive
+before accessing it and draws the A: overview before it starts reading B:. If
+CP/M or the BIOS stops while accessing media, the last visible drive letter
+therefore identifies the failing operation and the completed A: panel remains
+visible during the B: read. Available keys are:
 
 - `Tab`: activate the other panel
 - `W` / `S`: move the cursor up or down
@@ -57,9 +61,17 @@ performing its normal action.
 
 Each panel header shows the drive's total file count, the current file number,
 and `^`/`v` indicators when more files exist above or below the visible window.
-Moving with `W` or `S` scrolls that panel automatically. Each file row shows its
-rounded-up size in KiB and the CP/M `R` (read-only), `S` (system), and `A`
-(archive) attributes; unset attributes appear as `-`.
+Moving with `W` or `S` scrolls that panel automatically. File sizes are resolved
+lazily when a row becomes active and then cached; `?K` means that the row has not
+yet been visited. This avoids issuing a complete-directory size search for
+every file before the first screen is shown. Each row also shows the CP/M `R`
+(read-only), `S` (system), and `A` (archive) attributes; unset attributes appear
+as `-`.
+
+The drive menu deliberately does not probe all six configured drive letters:
+under CP/M 2.2, selecting unreadable or absent media may enter the BIOS disk
+error path instead of returning an error to P2FILE. Insert or mount the desired
+disk before selecting its drive letter. The menu displays this reminder.
 
 Panel headers and the active panel's current `>` row use the P2000C terminal's
 inverse-video attribute. The inactive panel has no cursor marker or highlighted

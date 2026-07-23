@@ -37,10 +37,17 @@ BOLDINV EQU     11H
         ORG     0100H
 
 START:  LXI     SP,STACK
+        LDA     LDRIVE
+        CALL    SHOWSTART
         CALL    LOADL
+        CALL    DRAW
+        LDA     RDRIVE
+        CALL    SHOWREAD
         CALL    LOADR
 
 MAIN:   CALL    DRAW
+        CALL    LOADCURSIZE
+        CALL    REDRAWC
 KEYLOOP:CALL    GETKEY
         STA     KEYTMP
         LDA     MODAL
@@ -84,6 +91,7 @@ KEYUP:  CPI     09H
 KTAB:   LDA     ACTIVE
         XRI     1
         STA     ACTIVE
+        CALL    LOADCURSIZE
         CALL    SETL
         CALL    DRAWHDR
         CALL    DRAWCUR
@@ -94,11 +102,13 @@ KTAB:   LDA     ACTIVE
 
 KUP:    CALL    SAVENAV
         CALL    MOVEUP
+        CALL    LOADCURSIZE
         CALL    NAVDRAW
         JMP     KEYLOOP
 
 KDOWN:  CALL    SAVENAV
         CALL    MOVEDOWN
+        CALL    LOADCURSIZE
         CALL    NAVDRAW
         JMP     KEYLOOP
 
@@ -132,7 +142,6 @@ KQUIT:  MVI     A,0CH
 LOADL:  LDA     LDRIVE
         STA     SRCHFCB
         LXI     H,LFILES
-        SHLD    BASEPTR
         SHLD    STOREPTR
         LXI     H,LCOUNT
         SHLD    CNTPTR
@@ -143,7 +152,6 @@ LOADL:  LDA     LDRIVE
 LOADR:  LDA     RDRIVE
         STA     SRCHFCB
         LXI     H,RFILES
-        SHLD    BASEPTR
         SHLD    STOREPTR
         LXI     H,RCOUNT
         SHLD    CNTPTR
@@ -226,7 +234,7 @@ RDCOPY: LDAX    D
         INX     H
         MVI     M,0
         INX     H
-        MVI     M,0
+        MVI     M,0FFH
         INX     H
         LDA     ATTRTMP
         MOV     M,A
@@ -242,22 +250,22 @@ RDCOPY: LDAX    D
         CALL    BDOS
         JMP     RDLOOP
 
-RDDONE: XRA     A
-        STA     SIZEIDX
-        LHLD    BASEPTR
-        SHLD    WORKLIST
-RDSIZE: LDA     SIZEIDX
-        MOV     B,A
-        LHLD    CNTPTR
-        MOV     A,M
-        CMP     B
-        RZ
-        MOV     A,B
-        CALL    WENTRY
+RDDONE: RET
+
+; Resolve an entry's size only when its row becomes active. Byte 14 of the
+; panel entry is FFH until BDOS function 35 has populated bytes 12-14.
+ENSURESIZE:
+        LDA     LINEIDX
+        CALL    PENTRY
         SHLD    ENTRYPTR
+        LXI     D,14
+        DAD     D
+        MOV     A,M
+        CPI     0FFH
+        RNZ
         LXI     H,SRCFCB
         CALL    CLEAR36
-        LDA     SRCHFCB
+        LDA     PDRIVE
         STA     SRCFCB
         LHLD    ENTRYPTR
         XCHG
@@ -283,10 +291,7 @@ RDSZCP: LDAX    D
         INX     H
         LDA     SRCFCB+35
         MOV     M,A
-        LDA     SIZEIDX
-        INR     A
-        STA     SIZEIDX
-        JMP     RDSIZE
+        RET
 
 NORML:  LDA     LCOUNT
         MOV     B,A
@@ -579,8 +584,13 @@ DLSEL:  CALL    PUTC
         MVI     A,' '
         CALL    PUTC
         PUSH    H
-        LXI     D,12
+        LXI     D,14
         DAD     D
+        MOV     A,M
+        CPI     0FFH
+        JZ      DLUNKSZ
+        DCX     H
+        DCX     H
         MOV     E,M
         INX     H
         MOV     D,M
@@ -591,6 +601,11 @@ DLSEL:  CALL    PUTC
         CALL    HALF
         CALL    HALF
         CALL    PRINT5
+        JMP     DLSIZED
+DLUNKSZ:
+        LXI     H,UNKSIZE
+        CALL    PRINTZ
+DLSIZED:
         MVI     A,'K'
         CALL    PUTC
         MVI     A,' '
@@ -831,6 +846,21 @@ REDRAWR:CALL    SETR
 REDSET: CALL    DRAWCUR
         RET
 
+LOADCURSIZE:
+        LDA     ACTIVE
+        ORA     A
+        JNZ     LCSR
+        CALL    SETL
+        JMP     LCSSET
+LCSR:   CALL    SETR
+LCSSET: LDA     PCOUNT
+        ORA     A
+        RZ
+        LDA     PCUR
+        STA     LINEIDX
+        CALL    ENSURESIZE
+        RET
+
 DRAWCUR:LDA     PCOUNT
         ORA     A
         RZ
@@ -962,6 +992,9 @@ PDUP:   CPI     'A'
         JNC     PDKEY
         SUI     'A'-1
         MOV     B,A
+        PUSH    B
+        CALL    SHOWREAD
+        POP     B
         LDA     ACTIVE
         ORA     A
         JNZ     PDRIGHT
@@ -990,6 +1023,11 @@ SHOWDRIVES:
         MVI     C,27
         CALL    POS
         LXI     H,DRVPROMPT
+        CALL    PRINTZ
+        MVI     B,12
+        MVI     C,26
+        CALL    POS
+        LXI     H,DRVREADY
         CALL    PRINTZ
         MVI     A,NORMATT
         CALL    SETATTR
@@ -1765,9 +1803,40 @@ GKWAIT: MVI     E,0FFH
         POP     B
         RET
 
+SHOWSTART:
+        PUSH    PSW
+        MVI     A,0CH
+        CALL    PUTC
+        LXI     H,STARTMSG
+        CALL    PRINTZ
+        POP     PSW
+        ADI     'A'-1
+        CALL    PUTC
+        MVI     A,':'
+        CALL    PUTC
+        LXI     H,WAITMSG
+        CALL    PRINTZ
+        RET
+
+SHOWREAD:
+        PUSH    PSW
+        LXI     H,READMSG
+        CALL    STATUS
+        POP     PSW
+        ADI     'A'-1
+        CALL    PUTC
+        MVI     A,':'
+        CALL    PUTC
+        RET
+
 ; ---------------------------------------------------------------------------
 ; Data
 
+STARTMSG:
+        DB      'P2FILE: READING DRIVE ',0
+WAITMSG:DB      ' - PLEASE WAIT',0
+READMSG:DB      'P2FILE: READING DRIVE ',0
+UNKSIZE:DB      '    ?',0
 HELP:   DB      'TAB PANEL  W/S MOVE  SPACE MARK  C COPY  D DELETE'
         DB      '  R RENAME  V DRIVE  Q QUIT',0
 DRIVEMSG:
@@ -1777,6 +1846,8 @@ DRVHEAD:DB      'SELECT DRIVE',0
 DRVOPTS:DB      'A:  B:  C:  D:  E:  F:',0
 DRVPROMPT:
         DB      'PRESS A-F OR ESC TO CANCEL',0
+DRVREADY:
+        DB      'INSERT DISK BEFORE SELECTING',0
 BYEMSG: DB      'P2FILE finished.',13,10,0
 NOFILES:DB      'No files in the active panel.',0
 SAMEDRV:DB      'Choose two different drives before copying.',0
@@ -1843,7 +1914,6 @@ KEYTMP: DB      0
 MODROWNO:
         DB      0
 INLEN:  DB      0
-SIZEIDX:DB      0
 ATTRTMP:DB      0
 LEAD:   DB      0
 
@@ -1853,7 +1923,6 @@ WORKLIST:
         DW      0
 STOREPTR:
         DW      0
-BASEPTR:DW      0
 CNTPTR: DW      0
 DIRPTR: DW      0
 ENTRYPTR:

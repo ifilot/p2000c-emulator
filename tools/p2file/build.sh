@@ -64,7 +64,6 @@ if ! "${cli}" \
   --floppy-a "${system_disk}" \
   --floppy-b "${work_disk}" \
   --write-through \
-  --fast-storage \
   --wait-cycles 1000000000 \
   --wait-for 'A>' \
   --send 'B:\rASM P2FILE\r' \
@@ -72,9 +71,11 @@ if ! "${cli}" \
   --send 'LOAD P2FILE\r' \
   --wait-for 'FIRST ADDRESS' \
   --send 'P2FILE\r' \
-  --wait-for 'DRIVE A:' \
-  --run 20000000 \
+  --wait-for 'P2FILE: READING DRIVE A:' \
+  --wait-for 'P2FILE: READING DRIVE B:' \
   --wait-for 'DRIVE B:    6 FILES' \
+  --wait-for 'Q QUIT' \
+  --wait-for 'CPM61   .COM     6K' \
   --send 'Q' \
   --wait-for 'B>' \
   --output text >"${build_log}" 2>&1; then

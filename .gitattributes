@@ -1,2 +1,6 @@
 # IPLDUMP.ASM is a directly transferable CP/M text file: CR/LF plus Ctrl-Z EOF.
 tools/IPLDUMP.ASM -text
+
+# P2FILE sources and media are copied directly to CP/M.
+tools/p2file/P2FILE.ASM -text whitespace=cr-at-eol
+images/cpm/p2file.flp binary

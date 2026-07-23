@@ -49,9 +49,9 @@ execute_process(
           --wait-for "DRIVE A:"
           --run 20000000
           --wait-for "23 FILES"
-          --wait-for "ASM     .COM     8K"
           --send "\\t"
           --run 5000000
+          --wait-for "ASM     .COM     8K"
           ${scroll_down_actions}
           --wait-for "23/ 23 ^"
           ${scroll_up_actions}
@@ -62,6 +62,7 @@ execute_process(
           --wait-for "SELECT DRIVE"
           --wait-for "A:  B:  C:  D:  E:  F:"
           --wait-for "PRESS A-F OR ESC TO CANCEL"
+          --wait-for "INSERT DISK BEFORE SELECTING"
           --run 5000000
           --send "B"
           --run 20000000
