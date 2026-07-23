@@ -1914,7 +1914,7 @@ void MainWindow::start_fast_boot_msdos() {
     return;
   }
 
-  fast_boot_state_ = FastBootState::kWaitForCpmPrompt;
+  fast_boot_controller_.start();
   fast_boot_stage_timer_.restart();
   statusBar()->showMessage(
       "P2093 CoPower fast boot: starting CP/M and waiting for A>...");
@@ -1922,7 +1922,7 @@ void MainWindow::start_fast_boot_msdos() {
 }
 
 void MainWindow::advance_fast_boot_msdos() {
-  if (fast_boot_state_ == FastBootState::kIdle) {
+  if (!fast_boot_controller_.active()) {
     return;
   }
   if (fast_boot_stage_timer_.elapsed() >= kFastBootStageTimeoutMs) {
@@ -1935,72 +1935,59 @@ void MainWindow::advance_fast_boot_msdos() {
   const Terminal::Screen& screen = machine_.terminal().screen();
   const std::string_view text(reinterpret_cast<const char*>(screen.data()),
                               screen.size());
-  const auto contains = [&](std::string_view prompt) {
-    return text.find(prompt) != std::string_view::npos;
-  };
   const auto send = [this](std::string_view bytes) {
     for (const char byte : bytes) {
       machine_.queue_key(static_cast<std::uint8_t>(byte));
     }
   };
 
-  switch (fast_boot_state_) {
-    case FastBootState::kWaitForCpmPrompt:
-      if (contains("A>")) {
-        send("MSBOOT\r");
-        fast_boot_state_ = FastBootState::kWaitForMsDosDiskPrompt;
-        fast_boot_stage_timer_.restart();
-        statusBar()->showMessage(
-            "P2093 CoPower fast boot: running MSBOOT...");
-      }
+  switch (fast_boot_controller_.advance(text)) {
+    case FastBootController::Action::kNone:
       break;
-    case FastBootState::kWaitForMsDosDiskPrompt:
-      if (contains("Insert MS-DOS Disk")) {
-        if (!mount_bundled_copower_dos_floppy(0)) {
-          finish_fast_boot_msdos(
-              "P2093 CoPower MS-DOS fast boot could not mount its MS-DOS "
-              "disk.");
-          break;
-        }
-        send("\r");
-        fast_boot_state_ = FastBootState::kWaitForDatePrompt;
-        fast_boot_stage_timer_.restart();
-        statusBar()->showMessage(
-            "P2093 CoPower fast boot: MS-DOS disk inserted...");
-      }
+    case FastBootController::Action::kSendMsBoot:
+      send("MSBOOT\r");
+      fast_boot_stage_timer_.restart();
+      statusBar()->showMessage("P2093 CoPower fast boot: running MSBOOT...");
       break;
-    case FastBootState::kWaitForDatePrompt:
-      if (contains("Enter new date:")) {
-        send("\r");
-        fast_boot_state_ = FastBootState::kWaitForTimePrompt;
-        fast_boot_stage_timer_.restart();
-        statusBar()->showMessage(
-            "P2093 CoPower fast boot: accepting the default date...");
-      }
-      break;
-    case FastBootState::kWaitForTimePrompt:
-      if (contains("Enter new time:")) {
-        send("\r");
-        fast_boot_state_ = FastBootState::kWaitForDosPrompt;
-        fast_boot_stage_timer_.restart();
-        statusBar()->showMessage(
-            "P2093 CoPower fast boot: accepting the default time...");
-      }
-      break;
-    case FastBootState::kWaitForDosPrompt:
-      if (contains("A>")) {
+    case FastBootController::Action::kMountMsDosDisk:
+      if (!mount_bundled_copower_dos_floppy(0)) {
         finish_fast_boot_msdos(
-            "P2093 CoPower MS-DOS 2.11 ready in drive A.");
-        display_->setFocus();
+            "P2093 CoPower MS-DOS fast boot could not mount its MS-DOS "
+            "disk.");
+        break;
       }
+      if (!fast_boot_controller_.confirm_ms_dos_disk_mounted()) {
+        finish_fast_boot_msdos(
+            "P2093 CoPower MS-DOS fast boot entered an invalid disk state.");
+        break;
+      }
+      send("\r");
+      fast_boot_stage_timer_.restart();
+      statusBar()->showMessage(
+          "P2093 CoPower fast boot: MS-DOS disk inserted...");
       break;
-    case FastBootState::kIdle:
+    case FastBootController::Action::kAcceptDate:
+      send("\r");
+      fast_boot_stage_timer_.restart();
+      statusBar()->showMessage(
+          "P2093 CoPower fast boot: accepting the default date...");
+      break;
+    case FastBootController::Action::kAcceptTime:
+      send("\r");
+      fast_boot_stage_timer_.restart();
+      statusBar()->showMessage(
+          "P2093 CoPower fast boot: accepting the default time...");
+      break;
+    case FastBootController::Action::kComplete:
+      finish_fast_boot_msdos(
+          "P2093 CoPower MS-DOS 2.11 ready in drive A.");
+      display_->setFocus();
       break;
   }
 }
 
 void MainWindow::finish_fast_boot_msdos(const QString& status) {
-  fast_boot_state_ = FastBootState::kIdle;
+  fast_boot_controller_.cancel();
   fast_boot_stage_timer_.invalidate();
   if (fast_boot_msdos_action_ != nullptr) {
     fast_boot_msdos_action_->setEnabled(true);

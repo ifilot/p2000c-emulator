@@ -49,6 +49,16 @@ target_compile_options(p2000c_core PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
+add_library(p2000c_app_logic STATIC
+  src/app/fast_boot_controller.cpp
+  src/app/fast_boot_controller.h
+)
+target_include_directories(p2000c_app_logic PUBLIC src)
+target_compile_options(p2000c_app_logic PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+  $<$<CXX_COMPILER_ID:MSVC>:/W4>
+)
+
 add_executable(p2000c_media_info tools/media_info/media_info.cpp)
 target_link_libraries(p2000c_media_info PRIVATE p2000c_core)
 
@@ -76,6 +86,7 @@ if(P2000C_BUILD_APP)
   qt_add_executable(p2000c
     src/app/display_widget.cpp
     src/app/display_widget.h
+    src/app/fast_boot_controller.h
     src/app/main.cpp
     src/app/hardware_audio.cpp
     src/app/hardware_audio.h
@@ -115,7 +126,8 @@ if(P2000C_BUILD_APP)
       "LICENSE"
       "THIRD_PARTY.md"
   )
-  target_link_libraries(p2000c PRIVATE p2000c_core Qt6::Widgets)
+  target_link_libraries(
+    p2000c PRIVATE p2000c_app_logic p2000c_core Qt6::Widgets)
   target_link_libraries(p2000c PRIVATE OpenAL::OpenAL)
   target_compile_definitions(p2000c PRIVATE
     P2000C_HAS_OPENAL=1
@@ -359,6 +371,12 @@ if(BUILD_TESTING)
   target_link_libraries(copower_board_test PRIVATE p2000c_core)
   add_test(NAME copower_board_test COMMAND copower_board_test)
 
+  add_executable(
+    fast_boot_controller_test tests/fast_boot_controller_test.cpp)
+  target_link_libraries(
+    fast_boot_controller_test PRIVATE p2000c_app_logic)
+  add_test(NAME fast_boot_controller_test COMMAND fast_boot_controller_test)
+
   add_executable(p2000c_machine_test tests/p2000c_machine_test.cpp)
   target_link_libraries(p2000c_machine_test PRIVATE p2000c_core)
   add_test(
@@ -472,6 +490,7 @@ if(BUILD_TESTING)
       tests/main_window_test.cpp
       src/app/display_widget.cpp
       src/app/display_widget.h
+      src/app/fast_boot_controller.h
       src/app/hardware_audio.cpp
       src/app/hardware_audio.h
       src/app/main_window.cpp
@@ -510,7 +529,8 @@ if(BUILD_TESTING)
         "LICENSE"
         "THIRD_PARTY.md"
     )
-    target_link_libraries(p2000c_app_test PRIVATE p2000c_core Qt6::Widgets)
+    target_link_libraries(
+      p2000c_app_test PRIVATE p2000c_app_logic p2000c_core Qt6::Widgets)
     target_link_libraries(p2000c_app_test PRIVATE OpenAL::OpenAL)
     target_compile_definitions(p2000c_app_test PRIVATE
       P2000C_HAS_OPENAL=1

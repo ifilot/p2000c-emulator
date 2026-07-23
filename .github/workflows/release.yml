@@ -1,0 +1,167 @@
+name: Publish tested release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    name: Promote tested installers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v5
+
+      - name: Match release tag to package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B release-metadata \
+            -DP2000C_BUILD_APP=OFF \
+            -DBUILD_TESTING=OFF
+          version="$(tr -d '\r\n' < release-metadata/package-version.txt)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match project version v${version}." >&2
+            exit 1
+          fi
+
+      - name: Find successful CI run for tagged commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for attempt in {1..60}; do
+            runs="$(
+              gh run list \
+                --repo "$GITHUB_REPOSITORY" \
+                --workflow build-and-package.yml \
+                --commit "$GITHUB_SHA" \
+                --event push \
+                --limit 20 \
+                --json databaseId,headBranch,headSha,status,conclusion
+            )"
+
+            # Prefer any completed success for this exact default-branch
+            # commit. This deliberately tolerates a later flaky rerun of the
+            # same immutable source without rebuilding release binaries.
+            run_id="$(
+              jq -r \
+                --arg sha "$GITHUB_SHA" \
+                --arg branch "$DEFAULT_BRANCH" \
+                '[.[] | select(
+                    .headSha == $sha and
+                    .headBranch == $branch and
+                    .conclusion == "success"
+                  )][0].databaseId // empty' \
+                <<<"$runs"
+            )"
+            if [[ -n "$run_id" ]]; then
+              break
+            fi
+
+            # Otherwise follow an exact matching run that is still active.
+            # If every matching run has already failed, select the newest one
+            # below so the release is refused immediately and transparently.
+            run_id="$(
+              jq -r \
+                --arg sha "$GITHUB_SHA" \
+                --arg branch "$DEFAULT_BRANCH" \
+                '[.[] | select(
+                    .headSha == $sha and
+                    .headBranch == $branch and
+                    .status != "completed"
+                  )][0].databaseId // empty' \
+                <<<"$runs"
+            )"
+            if [[ -n "$run_id" ]]; then
+              break
+            fi
+
+            run_id="$(
+              jq -r \
+                --arg sha "$GITHUB_SHA" \
+                --arg branch "$DEFAULT_BRANCH" \
+                '[.[] | select(
+                    .headSha == $sha and .headBranch == $branch
+                  )][0].databaseId // empty' \
+                <<<"$runs"
+            )"
+            if [[ -n "$run_id" ]]; then
+              break
+            fi
+
+            echo "Waiting for CI to start for ${GITHUB_SHA} (attempt ${attempt}/60)..."
+            sleep 10
+          done
+
+          if [[ -z "$run_id" ]]; then
+            echo "No default-branch CI run found for tagged commit ${GITHUB_SHA}." >&2
+            exit 1
+          fi
+
+          echo "Waiting for CI run ${run_id}..."
+          gh run watch "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --interval 10
+          conclusion="$(
+            gh run view "$run_id" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json conclusion \
+              --jq .conclusion
+          )"
+          if [[ "$conclusion" != "success" ]]; then
+            echo "CI run ${run_id} concluded with ${conclusion}; release refused." >&2
+            exit 1
+          fi
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Download installers produced by successful CI
+        uses: actions/download-artifact@v5
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.ci.outputs.run_id }}
+          pattern: installers-${{ github.sha }}-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify and publish exact tested assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          assets=(
+            "dist/p2000c-emulator-${version}-windows-x86_64.exe"
+            "dist/p2000c-emulator-${version}-linux-x86_64.run"
+            "dist/p2000c-emulator-${version}-linux-x86_64.AppImage"
+            "dist/p2000c-emulator-${version}-macos-x86_64.dmg"
+            "dist/p2000c-emulator-${version}-macos-arm64.dmg"
+          )
+          for asset in "${assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              echo "Missing tested release asset: ${asset}" >&2
+              exit 1
+            fi
+          done
+
+          printf 'Promoting assets from CI run %s:\n' \
+            "${{ steps.ci.outputs.run_id }}"
+          printf '  %s\n' "${assets[@]}"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            "${assets[@]}"

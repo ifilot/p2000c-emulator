@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <filesystem>
 
+#include "app/fast_boot_controller.h"
 #include "core/p2000c_machine.h"
 
 class QAction;
@@ -33,15 +34,6 @@ class MainWindow : public QMainWindow {
     static constexpr qint64 kMaximumCatchUpNanoseconds = 100'000'000;
     static constexpr std::size_t kMsDosApplicationImageCount = 2;
     static constexpr qint64 kFastBootStageTimeoutMs = 60'000;
-
-    enum class FastBootState {
-      kIdle,
-      kWaitForCpmPrompt,
-      kWaitForMsDosDiskPrompt,
-      kWaitForDatePrompt,
-      kWaitForTimePrompt,
-      kWaitForDosPrompt,
-    };
 
   public:
     /** Creates the emulator window, menus, display, and paced run timer. */
@@ -214,7 +206,7 @@ class MainWindow : public QMainWindow {
     QElapsedTimer execution_timer_;
     QElapsedTimer memory_panel_timer_;
     QElapsedTimer fast_boot_stage_timer_;
-    FastBootState fast_boot_state_ = FastBootState::kIdle;
+    FastBootController fast_boot_controller_;
     double pending_t_states_ = 0.0;
     double speed_multiplier_ = 1.0;
     std::uint64_t terminal_revision_ = 0;

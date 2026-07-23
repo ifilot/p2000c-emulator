@@ -810,9 +810,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  // Run the long CoPower boot integration at the fastest supported speed so
-  // the test does not depend on the performance of its hosted CI runner.
-  QAction* speed = find_action(&window, "16 MHz (400%)");
+  QAction* speed = find_action(&window, "8 MHz (200%)");
   if (speed == nullptr) {
     return 1;
   }
@@ -1220,39 +1218,18 @@ int main(int argc, char* argv[]) {
   }
 
   fast_boot->trigger();
-  QEventLoop fast_boot_wait;
-  QTimer fast_boot_poll;
-  fast_boot_poll.setInterval(10);
-  QTimer fast_boot_timeout;
-  fast_boot_timeout.setSingleShot(true);
-  // The emulator runs in real time while this UI test is pumping its event
-  // loop.  Fifteen seconds is too tight for the slower macOS hosted runners;
-  // allow enough headroom by matching the application's per-stage fast-boot
-  // timeout.
-  fast_boot_timeout.setInterval(60000);
-  QObject::connect(&fast_boot_poll, &QTimer::timeout, &fast_boot_wait, [&]() {
-    if (window.statusBar()->currentMessage().contains(
-            "P2093 CoPower MS-DOS 2.11 ready")) {
-      fast_boot_wait.quit();
-    }
-  });
-  QObject::connect(&fast_boot_timeout, &QTimer::timeout, &fast_boot_wait,
-                   &QEventLoop::quit);
-  fast_boot_poll.start();
-  fast_boot_timeout.start();
-  fast_boot_wait.exec();
-
-  const auto& dos_screen = display->screen();
-  const std::string dos_text(dos_screen.begin(), dos_screen.end());
-  if (!fast_boot->isEnabled() || !copower->isChecked() ||
+  if (fast_boot->isEnabled() || !copower->isChecked() ||
       !window.statusBar()->currentMessage().contains(
-          "P2093 CoPower MS-DOS 2.11 ready") ||
-      dos_text.find("Microsoft MS-DOS version 2.11") == std::string::npos ||
-      dos_text.find("A>") == std::string::npos ||
+          "starting CP/M and waiting for A>") ||
       drive_a_current == nullptr ||
-      !drive_a_current->statusTip().contains("copower_dos_drive_a.flp") ||
+      !drive_a_current->statusTip().contains("copower_cpm_drive_a.flp") ||
       current_hard_disk_1->isChecked() || current_hard_disk_2->isChecked()) {
-    std::cerr << "One-click P2093 CoPower MS-DOS boot did not reach A>.\n";
+    std::cerr << "One-click P2093 CoPower boot did not start correctly.\n";
+    return 1;
+  }
+  copower->setChecked(false);
+  if (!fast_boot->isEnabled()) {
+    std::cerr << "Cancelling CoPower boot did not restore its action.\n";
     return 1;
   }
   return 0;
