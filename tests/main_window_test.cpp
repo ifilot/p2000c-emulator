@@ -810,7 +810,9 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  QAction* speed = find_action(&window, "8 MHz (200%)");
+  // Run the long CoPower boot integration at the fastest supported speed so
+  // the test does not depend on the performance of its hosted CI runner.
+  QAction* speed = find_action(&window, "16 MHz (400%)");
   if (speed == nullptr) {
     return 1;
   }

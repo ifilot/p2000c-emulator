@@ -29,7 +29,7 @@ FSIZE   EQU     23H
 MAXFILE EQU     128
 ROWS    EQU     22
 FIRST   EQU     1
-ENTSIZ  EQU     16
+ENTSIZ  EQU     15
 NORMATT EQU     40H
 INVATT  EQU     50H
 BOLDINV EQU     11H
@@ -46,8 +46,6 @@ START:  LXI     SP,STACK
         CALL    LOADR
 
 MAIN:   CALL    DRAW
-        CALL    LOADCURSIZE
-        CALL    REDRAWC
 KEYLOOP:CALL    GETKEY
         STA     KEYTMP
         LDA     MODAL
@@ -91,7 +89,6 @@ KEYUP:  CPI     09H
 KTAB:   LDA     ACTIVE
         XRI     1
         STA     ACTIVE
-        CALL    LOADCURSIZE
         CALL    SETL
         CALL    DRAWHDR
         CALL    DRAWCUR
@@ -102,13 +99,11 @@ KTAB:   LDA     ACTIVE
 
 KUP:    CALL    SAVENAV
         CALL    MOVEUP
-        CALL    LOADCURSIZE
         CALL    NAVDRAW
         JMP     KEYLOOP
 
 KDOWN:  CALL    SAVENAV
         CALL    MOVEDOWN
-        CALL    LOADCURSIZE
         CALL    NAVDRAW
         JMP     KEYLOOP
 
@@ -194,29 +189,6 @@ RDLOOP: CPI     0FFH
         DAD     D
         INX     H
         SHLD    DIRPTR
-        LXI     D,8
-        DAD     D
-        MVI     B,0
-        MOV     A,M
-        ANI     80H
-        JZ      RDATTRS
-        MVI     B,1
-RDATTRS:INX     H
-        MOV     A,M
-        ANI     80H
-        JZ      RDATTRA
-        MOV     A,B
-        ORI     2
-        MOV     B,A
-RDATTRA:INX     H
-        MOV     A,M
-        ANI     80H
-        JZ      RDATTRD
-        MOV     A,B
-        ORI     4
-        MOV     B,A
-RDATTRD:MOV     A,B
-        STA     ATTRTMP
         LHLD    DIRPTR
         XCHG
         LHLD    STOREPTR
@@ -235,9 +207,6 @@ RDCOPY: LDAX    D
         MVI     M,0
         INX     H
         MVI     M,0FFH
-        INX     H
-        LDA     ATTRTMP
-        MOV     M,A
         INX     H
         SHLD    STOREPTR
         LHLD    CNTPTR
@@ -343,7 +312,60 @@ DRAW:   MVI     A,0CH
         CALL    DRAWL
         CALL    DRAWR
         CALL    DRAWHELP
+        CALL    FILLSIZES
         RET
+
+; Populate exact sizes only for the two visible windows. The initial panel
+; drawing therefore appears immediately, followed by one visibly updated row
+; per BDOS function-35 query. Cached rows are skipped on later redraws.
+FILLSIZES:
+        CALL    SETL
+        CALL    FILLPANEL
+        CALL    SETR
+        CALL    FILLPANEL
+        RET
+
+FILLPANEL:
+        LDA     PTOP
+        STA     SIZEIDX
+        MVI     A,ROWS
+        STA     SIZELEFT
+FSLOOP: LDA     SIZELEFT
+        ORA     A
+        RZ
+        LDA     SIZEIDX
+        MOV     B,A
+        LDA     PCOUNT
+        CMP     B
+        RC
+        RZ
+        MOV     A,B
+        CALL    PENTRY
+        LXI     D,14
+        DAD     D
+        MOV     A,M
+        CPI     0FFH
+        JNZ     FSNEXT
+        LDA     SIZEIDX
+        STA     LINEIDX
+        CALL    ENSURESIZE
+        LDA     SIZEIDX
+        STA     DRAWIDX
+        MOV     B,A
+        LDA     PTOP
+        MOV     C,A
+        MOV     A,B
+        SUB     C
+        ADI     FIRST
+        STA     DRAWROW
+        CALL    DRAWLINE
+FSNEXT: LDA     SIZEIDX
+        INR     A
+        STA     SIZEIDX
+        LDA     SIZELEFT
+        DCR     A
+        STA     SIZELEFT
+        JMP     FSLOOP
 
 DRAWHELP:
         MVI     B,23
