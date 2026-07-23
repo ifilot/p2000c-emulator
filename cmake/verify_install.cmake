@@ -75,8 +75,8 @@ foreach(manual IN ITEMS
   endif()
 endforeach()
 
-foreach(floppy IN ITEMS chess.flp copower-boot.flp ipldump.flp p2edit.flp
-                        p2file.flp system.flp zork.flp)
+foreach(floppy IN ITEMS chess.flp copower-boot.flp ipldump.flp p2util.flp
+                        system.flp zork.flp)
   set(path "${data_root}/images/cpm/${floppy}")
   require_file("${path}")
   file(SIZE "${path}" size)

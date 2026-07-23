@@ -118,11 +118,8 @@ class MainWindow : public QMainWindow {
     /** Mounts the bundled ASM/LOAD/IPLDUMP development floppy. */
     void mount_bundled_ipldump_floppy(std::size_t drive);
 
-    /** Mounts the bundled compiled P2FILE development floppy. */
-    void mount_bundled_p2file_floppy(std::size_t drive);
-
-    /** Mounts the bundled compiled P2EDIT development floppy. */
-    void mount_bundled_p2edit_floppy(std::size_t drive);
+    /** Mounts the bundled P2EDIT/P2FILE development floppy. */
+    void mount_bundled_p2util_floppy(std::size_t drive);
 
     /** Mounts a disposable blank 640 KiB data floppy. */
     void mount_bundled_blank_floppy(std::size_t drive);
@@ -169,8 +166,7 @@ class MainWindow : public QMainWindow {
     std::array<QAction*, 2> bundled_zork_actions_{};
     std::array<QAction*, 2> bundled_chess_actions_{};
     std::array<QAction*, 2> bundled_ipldump_actions_{};
-    std::array<QAction*, 2> bundled_p2edit_actions_{};
-    std::array<QAction*, 2> bundled_p2file_actions_{};
+    std::array<QAction*, 2> bundled_p2util_actions_{};
     std::array<QAction*, 2> bundled_blank_actions_{};
     std::array<QAction*, 2> save_floppy_actions_{};
     std::array<QMenu*, 2> recent_floppy_menus_{};
@@ -182,8 +178,7 @@ class MainWindow : public QMainWindow {
     std::array<QString, 2> bundled_zork_paths_{};
     std::array<QString, 2> bundled_chess_paths_{};
     std::array<QString, 2> bundled_ipldump_paths_{};
-    std::array<QString, 2> bundled_p2edit_paths_{};
-    std::array<QString, 2> bundled_p2file_paths_{};
+    std::array<QString, 2> bundled_p2util_paths_{};
     std::array<QString, 2> bundled_blank_paths_{};
     std::array<QLabel*, 2> media_status_labels_{};
     std::array<DrivePositionDisplay*, 2> floppy_position_displays_{};

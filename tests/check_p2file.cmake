@@ -1,18 +1,18 @@
 if(NOT DEFINED PROGRAM OR NOT DEFINED IPL OR NOT DEFINED SYSTEM_DISK OR
-   NOT DEFINED P2FILE_DISK OR NOT DEFINED HARD_DISK)
+   NOT DEFINED P2UTIL_DISK OR NOT DEFINED HARD_DISK)
   message(FATAL_ERROR
-    "PROGRAM, IPL, SYSTEM_DISK, P2FILE_DISK, and HARD_DISK are required")
+    "PROGRAM, IPL, SYSTEM_DISK, P2UTIL_DISK, and HARD_DISK are required")
 endif()
 
 file(SHA256 "${SYSTEM_DISK}" system_hash_before)
-file(SHA256 "${P2FILE_DISK}" p2file_hash_before)
+file(SHA256 "${P2UTIL_DISK}" p2util_hash_before)
 file(SHA256 "${HARD_DISK}" hard_hash_before)
 
 set(system_work "${CMAKE_CURRENT_BINARY_DIR}/p2file-system.flp")
-set(p2file_work "${CMAKE_CURRENT_BINARY_DIR}/p2file-tools.flp")
+set(p2file_work "${CMAKE_CURRENT_BINARY_DIR}/p2file-p2util.flp")
 set(hard_work "${CMAKE_CURRENT_BINARY_DIR}/p2file-hard.hda")
 file(COPY_FILE "${SYSTEM_DISK}" "${system_work}" ONLY_IF_DIFFERENT)
-file(COPY_FILE "${P2FILE_DISK}" "${p2file_work}" ONLY_IF_DIFFERENT)
+file(COPY_FILE "${P2UTIL_DISK}" "${p2file_work}" ONLY_IF_DIFFERENT)
 file(COPY_FILE "${HARD_DISK}" "${hard_work}" ONLY_IF_DIFFERENT)
 
 set(scroll_down_actions)
@@ -21,7 +21,7 @@ set(populate_commands "")
 foreach(step RANGE 1 17)
   string(APPEND populate_commands "SAVE 1 T${step}.TST\\r")
 endforeach()
-foreach(step RANGE 1 22)
+foreach(step RANGE 1 30)
   list(APPEND scroll_down_actions --send "S" --run 5000000)
   list(APPEND scroll_up_actions --send "W" --run 5000000)
 endforeach()
@@ -48,15 +48,22 @@ execute_process(
           --send "P2FILE\\r"
           --wait-for "DRIVE A:"
           --run 20000000
-          --wait-for "23 FILES"
+          --wait-for "27 FILES"
+          --wait-for "T12     .TST     1K"
+          --send "\\x18"
+          --run 5000000
+          --wait-for "DRIVE A:   16 FILES   2/ 16"
+          --send "\\x05"
+          --run 5000000
+          --wait-for "DRIVE A:   16 FILES   1/ 16"
           --send "\\t"
           --run 5000000
           --wait-for "ASM     .COM     8K"
           ${scroll_down_actions}
-          --wait-for "23/ 23 ^"
+          --wait-for "27/ 27 ^"
           --wait-for "T17     .TST     1K"
           ${scroll_up_actions}
-          --wait-for "1/ 23  v"
+          --wait-for "1/ 27  v"
           --send "\\t"
           --run 5000000
           --send "V"
@@ -145,10 +152,10 @@ endforeach()
 
 # The test uses explicit build-tree media copies; repository media stay pristine.
 file(SHA256 "${SYSTEM_DISK}" system_hash_after)
-file(SHA256 "${P2FILE_DISK}" p2file_hash_after)
+file(SHA256 "${P2UTIL_DISK}" p2util_hash_after)
 file(SHA256 "${HARD_DISK}" hard_hash_after)
 if(NOT system_hash_before STREQUAL system_hash_after OR
-   NOT p2file_hash_before STREQUAL p2file_hash_after OR
+   NOT p2util_hash_before STREQUAL p2util_hash_after OR
    NOT hard_hash_before STREQUAL hard_hash_after)
-  message(FATAL_ERROR "P2FILE CLI test modified source media")
+  message(FATAL_ERROR "P2FILE CLI test modified source P2UTIL media")
 endif()

@@ -1,16 +1,16 @@
 if(NOT DEFINED PROGRAM OR NOT DEFINED IPL OR NOT DEFINED SYSTEM_DISK OR
-   NOT DEFINED P2EDIT_DISK)
+   NOT DEFINED P2UTIL_DISK)
   message(FATAL_ERROR
-    "PROGRAM, IPL, SYSTEM_DISK, and P2EDIT_DISK are required")
+    "PROGRAM, IPL, SYSTEM_DISK, and P2UTIL_DISK are required")
 endif()
 
 file(SHA256 "${SYSTEM_DISK}" system_hash_before)
-file(SHA256 "${P2EDIT_DISK}" p2edit_hash_before)
+file(SHA256 "${P2UTIL_DISK}" p2util_hash_before)
 
 set(system_work "${CMAKE_CURRENT_BINARY_DIR}/p2edit-system.flp")
-set(p2edit_work "${CMAKE_CURRENT_BINARY_DIR}/p2edit-tools.flp")
+set(p2edit_work "${CMAKE_CURRENT_BINARY_DIR}/p2edit-p2util.flp")
 file(COPY_FILE "${SYSTEM_DISK}" "${system_work}" ONLY_IF_DIFFERENT)
-file(COPY_FILE "${P2EDIT_DISK}" "${p2edit_work}" ONLY_IF_DIFFERENT)
+file(COPY_FILE "${P2UTIL_DISK}" "${p2edit_work}" ONLY_IF_DIFFERENT)
 
 set(move_right_actions)
 foreach(step RANGE 1 5)
@@ -25,6 +25,12 @@ endforeach()
 set(save_name_actions)
 foreach(key IN ITEMS B ":" N "." T)
   list(APPEND save_name_actions --send "${key}" --run 1000000)
+endforeach()
+
+set(fixture_actions)
+foreach(key IN ITEMS H E L L O " " F R O M " " P 2 E D I T "\\r"
+                     S E C O N D " " L I N E)
+  list(APPEND fixture_actions --send "${key}" --run 1000000)
 endforeach()
 
 # Keep scripted keystrokes slightly separated to model the physical keyboard.
@@ -46,15 +52,24 @@ execute_process(
           --wait-for "FIRST ADDRESS"
           --run 5000000
           --send "P2EDIT B:TEST.TXT\\r"
+          --wait-for "New file"
+          --run 3000000
+          ${fixture_actions}
+          --send "\\x0f"
+          --wait-for "Wrote B:TEST.TXT"
+          --run 5000000
+          --send "\\x1b"
+          --wait-for "B>"
+          --send "P2EDIT B:TEST.TXT\\r"
           --wait-for "File read"
           --run 5000000
           --wait-for "Ln 1/2"
           --wait-for "HELLO FROM P2EDIT"
           --wait-for "SECOND LINE"
-          --send "\\x05"
+          --send "\\x03"
           --run 1000000
           --wait-for "Col 7"
-          --send "\\x05"
+          --send "\\x03"
           --run 1000000
           --wait-for "Col 12"
           --send "\\x02"
@@ -68,7 +83,7 @@ execute_process(
           --run 1000000
           --wait-for "HELLO! FROM P2EDIT"
           # Word navigation must also work while the cursor-centred gap is open.
-          --send "\\x05"
+          --send "\\x03"
           --run 1000000
           --wait-for "Col 8"
           --send "\\x02"
@@ -110,7 +125,7 @@ execute_process(
           --send "\\x0f"
           --wait-for "Wrote B:TEST.TXT"
           --run 5000000
-          --send "\\x18"
+          --send "\\x1b"
           --wait-for "B>"
           --send "TYPE TEST.TXT\\r"
           --wait-for "HELLO! FROM P2EDIT"
@@ -120,19 +135,19 @@ execute_process(
           --wait-for "File read"
           --run 3000000
           --wait-for "Ln 1/2"
-          --send "\\x04"
+          --send "\\x0c"
           --run 1000000
           --send "\\x7f"
           --run 3000000
           --wait-for "Ln 1/1"
           --wait-for "HELLO! FROM P2EDITSECOND LINE"
-          --send "\\x18"
+          --send "\\x1b"
           --wait-for "Save changes before exit? (Y/N/C)"
           --run 2000000
           --send "C"
           --wait-for "HELLO! FROM P2EDITSECOND LINE"
           --run 3000000
-          --send "\\x18"
+          --send "\\x1b"
           --wait-for "Save changes before exit? (Y/N/C)"
           --run 2000000
           --send "N"
@@ -156,7 +171,7 @@ execute_process(
           --send "\\r"
           --wait-for "Wrote B:N.T"
           --run 3000000
-          --send "\\x18"
+          --send "\\x1b"
           --wait-for "B>"
           --send "TYPE N.T\\r"
           --wait-for "X"
@@ -186,8 +201,8 @@ foreach(expected IN ITEMS "P2EDIT finished." "B>TYPE TEST.TXT"
 endforeach()
 
 file(SHA256 "${SYSTEM_DISK}" system_hash_after)
-file(SHA256 "${P2EDIT_DISK}" p2edit_hash_after)
+file(SHA256 "${P2UTIL_DISK}" p2util_hash_after)
 if(NOT system_hash_before STREQUAL system_hash_after OR
-   NOT p2edit_hash_before STREQUAL p2edit_hash_after)
-  message(FATAL_ERROR "P2EDIT CLI test modified source media")
+   NOT p2util_hash_before STREQUAL p2util_hash_after)
+  message(FATAL_ERROR "P2EDIT CLI test modified source P2UTIL media")
 endif()

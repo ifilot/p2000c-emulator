@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 # Release-version source of truth. Application metadata, About text, package
 # names, installer metadata, and CI release names are derived from this value.
-project(p2000c_emulator VERSION 0.2.0 LANGUAGES C CXX)
+project(p2000c_emulator VERSION 0.2.1 LANGUAGES C CXX)
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/package-version.txt"
      "${PROJECT_VERSION}\n")
@@ -112,8 +112,7 @@ if(P2000C_BUILD_APP)
       "images/cpm/chess.flp"
       "images/cpm/copower-boot.flp"
       "images/cpm/ipldump.flp"
-      "images/cpm/p2edit.flp"
-      "images/cpm/p2file.flp"
+      "images/cpm/p2util.flp"
       "images/cpm/system.flp"
       "images/cpm/zork.flp"
       "images/hard-disks/blank.hda"
@@ -167,14 +166,6 @@ if(P2000C_BUILD_APP)
   )
   install(FILES tools/ipldump/IPLDUMP.ASM tools/ipldump/IPLDUMP.BIN
     DESTINATION "${P2000C_PACKAGE_DATA_DIR}/firmware"
-    COMPONENT application
-  )
-  install(FILES tools/p2file/P2FILE.ASM tools/p2file/README.md
-    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/utilities/p2file"
-    COMPONENT application
-  )
-  install(FILES tools/p2edit/P2EDIT.ASM tools/p2edit/README.md
-    DESTINATION "${P2000C_PACKAGE_DATA_DIR}/utilities/p2edit"
     COMPONENT application
   )
   install(FILES LICENSE THIRD_PARTY.md README.md
@@ -343,20 +334,6 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
   )
 
-  add_test(
-    NAME p2file_format_test
-    COMMAND ${CMAKE_COMMAND}
-            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/P2FILE.ASM
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
-  )
-
-  add_test(
-    NAME p2edit_format_test
-    COMMAND ${CMAKE_COMMAND}
-            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/tools/p2edit/P2EDIT.ASM
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cpm_asm.cmake
-  )
-
   add_executable(raw_disk_image_test tests/raw_disk_image_test.cpp)
   target_link_libraries(raw_disk_image_test PRIVATE p2000c_core)
   add_test(
@@ -450,7 +427,7 @@ if(BUILD_TESTING)
             -DPROGRAM=$<TARGET_FILE:p2000c_cli>
             -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
             -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
-            -DP2FILE_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2file.flp
+            -DP2UTIL_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2util.flp
             -DHARD_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/hard-disks/blank.hda
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p2file.cmake
   )
@@ -461,29 +438,9 @@ if(BUILD_TESTING)
             -DPROGRAM=$<TARGET_FILE:p2000c_cli>
             -DIPL=${CMAKE_CURRENT_SOURCE_DIR}/tools/ipldump/IPLDUMP.BIN
             -DSYSTEM_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/system.flp
-            -DP2EDIT_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2edit.flp
+            -DP2UTIL_DISK=${CMAKE_CURRENT_SOURCE_DIR}/images/cpm/p2util.flp
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_p2edit.cmake
   )
-
-  find_program(P2000C_BASH_EXECUTABLE bash)
-  if(P2000C_BASH_EXECUTABLE)
-    add_test(
-      NAME p2file_build_script_test
-      COMMAND ${CMAKE_COMMAND} -E env
-              "P2000C_CLI=$<TARGET_FILE:p2000c_cli>"
-              ${P2000C_BASH_EXECUTABLE}
-              ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2file/build.sh
-              ${CMAKE_CURRENT_BINARY_DIR}/p2file-minimal-test.flp
-    )
-    add_test(
-      NAME p2edit_build_script_test
-      COMMAND ${CMAKE_COMMAND} -E env
-              "P2000C_CLI=$<TARGET_FILE:p2000c_cli>"
-              ${P2000C_BASH_EXECUTABLE}
-              ${CMAKE_CURRENT_SOURCE_DIR}/tools/p2edit/build.sh
-              ${CMAKE_CURRENT_BINARY_DIR}/p2edit-minimal-test.flp
-    )
-  endif()
 
   if(P2000C_BUILD_APP)
     qt_add_executable(p2000c_app_test
@@ -515,8 +472,7 @@ if(BUILD_TESTING)
         "images/cpm/chess.flp"
         "images/cpm/copower-boot.flp"
         "images/cpm/ipldump.flp"
-        "images/cpm/p2edit.flp"
-        "images/cpm/p2file.flp"
+        "images/cpm/p2util.flp"
         "images/cpm/system.flp"
         "images/cpm/zork.flp"
         "images/hard-disks/blank.hda"

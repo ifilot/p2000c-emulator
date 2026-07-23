@@ -1221,23 +1221,14 @@ void MainWindow::create_menus() {
     connect(ipldump_floppy, &QAction::triggered, this,
             [this, drive]() { mount_bundled_ipldump_floppy(drive); });
 
-    QAction* p2edit_floppy =
-        cpm_images->addAction("P2&EDIT Development Floppy");
-    p2edit_floppy->setObjectName(
-        QString("mountP2EditFloppy%1Action").arg(drive_letter));
-    p2edit_floppy->setCheckable(true);
-    bundled_p2edit_actions_[drive] = p2edit_floppy;
-    connect(p2edit_floppy, &QAction::triggered, this,
-            [this, drive]() { mount_bundled_p2edit_floppy(drive); });
-
-    QAction* p2file_floppy =
-        cpm_images->addAction("&P2FILE Development Floppy");
-    p2file_floppy->setObjectName(
-        QString("mountP2FileFloppy%1Action").arg(drive_letter));
-    p2file_floppy->setCheckable(true);
-    bundled_p2file_actions_[drive] = p2file_floppy;
-    connect(p2file_floppy, &QAction::triggered, this,
-            [this, drive]() { mount_bundled_p2file_floppy(drive); });
+    QAction* p2util_floppy =
+        cpm_images->addAction("&P2UTIL Development Floppy");
+    p2util_floppy->setObjectName(
+        QString("mountP2UtilFloppy%1Action").arg(drive_letter));
+    p2util_floppy->setCheckable(true);
+    bundled_p2util_actions_[drive] = p2util_floppy;
+    connect(p2util_floppy, &QAction::triggered, this,
+            [this, drive]() { mount_bundled_p2util_floppy(drive); });
 
     QAction* blank_floppy =
         cpm_images->addAction("&Blank 640 KiB Data Floppy");
@@ -1648,8 +1639,7 @@ void MainWindow::refresh_media_indicators() {
       bundled_zork_actions_[drive]->setChecked(false);
       bundled_chess_actions_[drive]->setChecked(false);
       bundled_ipldump_actions_[drive]->setChecked(false);
-      bundled_p2edit_actions_[drive]->setChecked(false);
-      bundled_p2file_actions_[drive]->setChecked(false);
+      bundled_p2util_actions_[drive]->setChecked(false);
       bundled_blank_actions_[drive]->setChecked(false);
       continue;
     }
@@ -1682,8 +1672,7 @@ void MainWindow::refresh_media_indicators() {
     const QString& zork_path = bundled_zork_paths_[drive];
     const QString& chess_path = bundled_chess_paths_[drive];
     const QString& ipldump_path = bundled_ipldump_paths_[drive];
-    const QString& p2edit_path = bundled_p2edit_paths_[drive];
-    const QString& p2file_path = bundled_p2file_paths_[drive];
+    const QString& p2util_path = bundled_p2util_paths_[drive];
     const QString& blank_path = bundled_blank_paths_[drive];
     bundled_system_actions_[drive]->setChecked(
         !system_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
@@ -1719,12 +1708,9 @@ void MainWindow::refresh_media_indicators() {
     bundled_ipldump_actions_[drive]->setChecked(
         !ipldump_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(ipldump_path).absoluteFilePath());
-    bundled_p2edit_actions_[drive]->setChecked(
-        !p2edit_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
-        QFileInfo(p2edit_path).absoluteFilePath());
-    bundled_p2file_actions_[drive]->setChecked(
-        !p2file_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
-        QFileInfo(p2file_path).absoluteFilePath());
+    bundled_p2util_actions_[drive]->setChecked(
+        !p2util_path.isEmpty() && QFileInfo(full_path).absoluteFilePath() ==
+        QFileInfo(p2util_path).absoluteFilePath());
     bundled_blank_actions_[drive]->setChecked(
         QFileInfo(full_path).absoluteFilePath() ==
         QFileInfo(blank_path).absoluteFilePath());
@@ -2094,44 +2080,23 @@ void MainWindow::mount_bundled_ipldump_floppy(std::size_t drive) {
   }
 }
 
-void MainWindow::mount_bundled_p2file_floppy(std::size_t drive) {
+void MainWindow::mount_bundled_p2util_floppy(std::size_t drive) {
   QString error;
   const QChar drive_letter = drive == 0 ? 'A' : 'B';
   const std::optional<QString> path = temporary_resource_copy(
-      ":/images/cpm/p2file.flp", media_session_.path(),
-      QString("p2file_drive_%1.flp").arg(drive_letter.toLower()), &error);
+      ":/images/cpm/p2util.flp", media_session_.path(),
+      QString("p2util_drive_%1.flp").arg(drive_letter.toLower()), &error);
   if (!path.has_value()) {
-    QMessageBox::critical(this, "Cannot prepare P2FILE floppy", error);
+    QMessageBox::critical(this, "Cannot prepare P2UTIL floppy", error);
     refresh_media_indicators();
     return;
   }
   if (mount_floppy(filesystem_path(*path), drive)) {
     temporary_floppy_paths_[drive] = *path;
-    bundled_p2file_paths_[drive] = *path;
+    bundled_p2util_paths_[drive] = *path;
     refresh_media_indicators();
     statusBar()->showMessage(
-        QString("P2FILE development floppy mounted in drive %1.")
-            .arg(drive_letter));
-  }
-}
-
-void MainWindow::mount_bundled_p2edit_floppy(std::size_t drive) {
-  QString error;
-  const QChar drive_letter = drive == 0 ? 'A' : 'B';
-  const std::optional<QString> path = temporary_resource_copy(
-      ":/images/cpm/p2edit.flp", media_session_.path(),
-      QString("p2edit_drive_%1.flp").arg(drive_letter.toLower()), &error);
-  if (!path.has_value()) {
-    QMessageBox::critical(this, "Cannot prepare P2EDIT floppy", error);
-    refresh_media_indicators();
-    return;
-  }
-  if (mount_floppy(filesystem_path(*path), drive)) {
-    temporary_floppy_paths_[drive] = *path;
-    bundled_p2edit_paths_[drive] = *path;
-    refresh_media_indicators();
-    statusBar()->showMessage(
-        QString("P2EDIT development floppy mounted in drive %1.")
+        QString("P2UTIL development floppy mounted in drive %1.")
             .arg(drive_letter));
   }
 }

@@ -1073,12 +1073,10 @@ int main(int argc, char* argv[]) {
   QAction* chess = find_named_action(&window, "mountChessFloppyBAction");
   QAction* ipldump =
       find_named_action(&window, "mountIplDumpFloppyBAction");
-  QAction* p2file =
-      find_named_action(&window, "mountP2FileFloppyBAction");
-  QAction* p2edit =
-      find_named_action(&window, "mountP2EditFloppyBAction");
+  QAction* p2util =
+      find_named_action(&window, "mountP2UtilFloppyBAction");
   if (zork == nullptr || chess == nullptr || ipldump == nullptr ||
-      p2file == nullptr || p2edit == nullptr) {
+      p2util == nullptr) {
     return 1;
   }
   zork->trigger();
@@ -1110,22 +1108,13 @@ int main(int argc, char* argv[]) {
     std::cerr << "Bundled IPL dump toolchain did not mount as raw media.\n";
     return 1;
   }
-  p2file->trigger();
-  const QString p2file_path = drive_b_current->statusTip();
-  if (p2file_path.isEmpty() ||
-      !validate_image(p2file_path,
+  p2util->trigger();
+  const QString p2util_path = drive_b_current->statusTip();
+  if (p2util_path.isEmpty() ||
+      !validate_image(p2util_path,
                       p2000c::RawDiskImage::Kind::kFloppy) ||
-      !p2file->isChecked() || ipldump->isChecked()) {
-    std::cerr << "Bundled P2FILE development floppy did not mount.\n";
-    return 1;
-  }
-  p2edit->trigger();
-  const QString p2edit_path = drive_b_current->statusTip();
-  if (p2edit_path.isEmpty() ||
-      !validate_image(p2edit_path,
-                      p2000c::RawDiskImage::Kind::kFloppy) ||
-      !p2edit->isChecked() || p2file->isChecked()) {
-    std::cerr << "Bundled P2EDIT development floppy did not mount.\n";
+      !p2util->isChecked() || ipldump->isChecked()) {
+    std::cerr << "Bundled P2UTIL development floppy did not mount.\n";
     return 1;
   }
 
