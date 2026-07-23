@@ -75,7 +75,7 @@ if ! "${cli}" \
   --wait-for 'P2FILE: READING DRIVE B:' \
   --wait-for 'DRIVE B:    6 FILES' \
   --wait-for 'Q QUIT' \
-  --wait-for 'CPM61   .COM     6K' \
+  --wait-for 'P2FILE  .COM     5K' \
   --send 'Q' \
   --wait-for 'B>' \
   --output text >"${build_log}" 2>&1; then

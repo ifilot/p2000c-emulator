@@ -52,21 +52,24 @@ visible during the B: read. Available keys are:
 
 Copying never silently replaces a file: P2FILE asks `Overwrite ...? (Y/N)` for
 each destination name that already exists. While copying, a centered
-inverse-video modal shows the current filename and its position in the batch.
-The completion message uses the same modal, leaving the bottom key table
-visible; the next key dismisses the message and performs its normal command.
-Messages and input prompts that use the bottom row are also temporary. Once
-input is complete, the next command key restores the inverted key table before
-performing its normal action.
+inverse-video modal shows the current filename, its position in the batch, and
+the number of 128-byte records copied for that file. The per-file counter is
+refreshed every 32 records (4 KiB) and once more at end-of-file. The completion
+message uses the same modal, leaving the bottom key table visible; the next key
+dismisses the message and performs its normal command. Messages and input
+prompts that use the bottom row are also temporary. Once input is complete, the
+next command key restores the inverted key table before performing its normal
+action.
 
 Each panel header shows the drive's total file count, the current file number,
 and `^`/`v` indicators when more files exist above or below the visible window.
-Moving with `W` or `S` scrolls that panel automatically. File sizes are resolved
-lazily when a row becomes active and then cached; `?K` means that the row has not
-yet been visited. This avoids issuing a complete-directory size search for
-every file before the first screen is shown. Each row also shows the CP/M `R`
-(read-only), `S` (system), and `A` (archive) attributes; unset attributes appear
-as `-`.
+Moving with `W` or `S` scrolls that panel automatically. Both panels are drawn
+immediately with `?K` placeholders, after which exact sizes are populated and
+cached one visible row at a time. Only the 22 on-screen rows in each panel are
+considered. Crossing a window boundary resolves newly exposed rows while
+skipping the cached rows that remain visible. This avoids querying sizes for
+off-screen files. File attributes are intentionally omitted from the compact
+row display.
 
 The drive menu deliberately does not probe all six configured drive letters:
 under CP/M 2.2, selecting unreadable or absent media may enter the BIOS disk

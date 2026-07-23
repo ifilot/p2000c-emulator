@@ -40,7 +40,7 @@ START:  LXI     SP,STACK
         LDA     LDRIVE
         CALL    SHOWSTART
         CALL    LOADL
-        CALL    DRAW
+        CALL    DRAWSHELL
         LDA     RDRIVE
         CALL    SHOWREAD
         CALL    LOADR
@@ -307,12 +307,16 @@ NORMZERO:
 ; ---------------------------------------------------------------------------
 ; Screen drawing
 
-DRAW:   MVI     A,0CH
+DRAW:   CALL    DRAWSHELL
+        CALL    FILLSIZES
+        RET
+
+DRAWSHELL:
+        MVI     A,0CH
         CALL    PUTC
         CALL    DRAWL
         CALL    DRAWR
         CALL    DRAWHELP
-        CALL    FILLSIZES
         RET
 
 ; Populate exact sizes only for the two visible windows. The initial panel
@@ -327,13 +331,13 @@ FILLSIZES:
 
 FILLPANEL:
         LDA     PTOP
-        STA     SIZEIDX
+        STA     SZIDX
         MVI     A,ROWS
-        STA     SIZELEFT
-FSLOOP: LDA     SIZELEFT
+        STA     SZLEFT
+FZLOOP: LDA     SZLEFT
         ORA     A
         RZ
-        LDA     SIZEIDX
+        LDA     SZIDX
         MOV     B,A
         LDA     PCOUNT
         CMP     B
@@ -345,11 +349,11 @@ FSLOOP: LDA     SIZELEFT
         DAD     D
         MOV     A,M
         CPI     0FFH
-        JNZ     FSNEXT
-        LDA     SIZEIDX
+        JNZ     FZNEXT
+        LDA     SZIDX
         STA     LINEIDX
         CALL    ENSURESIZE
-        LDA     SIZEIDX
+        LDA     SZIDX
         STA     DRAWIDX
         MOV     B,A
         LDA     PTOP
@@ -359,13 +363,13 @@ FSLOOP: LDA     SIZELEFT
         ADI     FIRST
         STA     DRAWROW
         CALL    DRAWLINE
-FSNEXT: LDA     SIZEIDX
+FZNEXT: LDA     SZIDX
         INR     A
-        STA     SIZEIDX
-        LDA     SIZELEFT
+        STA     SZIDX
+        LDA     SZLEFT
         DCR     A
-        STA     SIZELEFT
-        JMP     FSLOOP
+        STA     SZLEFT
+        JMP     FZLOOP
 
 DRAWHELP:
         MVI     B,23
@@ -630,30 +634,7 @@ DLUNKSZ:
 DLSIZED:
         MVI     A,'K'
         CALL    PUTC
-        MVI     A,' '
-        CALL    PUTC
         POP     H
-        LXI     D,15
-        DAD     D
-        MOV     A,M
-        STA     ATTRTMP
-        ANI     1
-        MVI     A,'-'
-        JZ      DLAR
-        MVI     A,'R'
-DLAR:   CALL    PUTC
-        LDA     ATTRTMP
-        ANI     2
-        MVI     A,'-'
-        JZ      DLAS
-        MVI     A,'S'
-DLAS:   CALL    PUTC
-        LDA     ATTRTMP
-        ANI     4
-        MVI     A,'-'
-        JZ      DLAA
-        MVI     A,'A'
-DLAA:   CALL    PUTC
 DLNORM: MVI     A,NORMATT
         CALL    SETATTR
         RET
@@ -830,6 +811,7 @@ NAVCHG:CALL    DRAWHDR
         CMP     B
         JZ      NAVROWS
         CALL    DRAWROWS
+        CALL    FILLPANEL
         RET
 NAVROWS:
         LDA     OLDCUR
@@ -866,21 +848,6 @@ REDRAWC:LDA     ACTIVE
         JMP     REDSET
 REDRAWR:CALL    SETR
 REDSET: CALL    DRAWCUR
-        RET
-
-LOADCURSIZE:
-        LDA     ACTIVE
-        ORA     A
-        JNZ     LCSR
-        CALL    SETL
-        JMP     LCSSET
-LCSR:   CALL    SETR
-LCSSET: LDA     PCOUNT
-        ORA     A
-        RZ
-        LDA     PCUR
-        STA     LINEIDX
-        CALL    ENSURESIZE
         RET
 
 DRAWCUR:LDA     PCOUNT
@@ -1107,6 +1074,7 @@ CPONE:  MOV     A,B
         LDA     CPNUM
         INR     A
         STA     CPNUM
+        CALL    PREPCOPY
         CALL    SHOWCOPY
         CALL    COPYONE
 CPNEXT: LDA     LOOPIDX
@@ -1208,6 +1176,43 @@ CCNEXT: LDA     LOOPIDX
 SENTRY: LHLD    SLIST
         JMP     ENTRYA
 
+; Cache the selected file's exact record count and initialise its individual
+; copy-progress counter. P2000C logical volumes fit in the displayed 16 bits.
+PREPCOPY:
+        LHLD    ENTRYPTR
+        LXI     D,14
+        DAD     D
+        MOV     A,M
+        CPI     0FFH
+        JNZ     CPPKNOWN
+        CALL    BUILDSRC
+        LXI     D,SRCFCB
+        MVI     C,FSIZE
+        CALL    BDOS
+        LHLD    ENTRYPTR
+        LXI     D,12
+        DAD     D
+        LDA     SRCFCB+33
+        MOV     M,A
+        INX     H
+        LDA     SRCFCB+34
+        MOV     M,A
+        INX     H
+        LDA     SRCFCB+35
+        MOV     M,A
+CPPKNOWN:
+        LHLD    ENTRYPTR
+        LXI     D,12
+        DAD     D
+        MOV     E,M
+        INX     H
+        MOV     D,M
+        XCHG
+        SHLD    CPTOTREC
+        LXI     H,0
+        SHLD    CPRECDONE
+        RET
+
 COPYONE:
         CALL    BUILDFCBS
         LXI     D,DIRBUF
@@ -1244,7 +1249,7 @@ CPRECORD:
         MVI     C,READSEQ
         CALL    BDOS
         ORA     A
-        JNZ     CPCLOSE
+        JNZ     CPRDEOF
         LXI     D,BUFFER
         MVI     C,SETDMA
         CALL    BDOS
@@ -1252,9 +1257,21 @@ CPRECORD:
         MVI     C,WRITSEQ
         CALL    BDOS
         ORA     A
-        JZ      CPRECORD
+        JNZ     CPWRERR
+        LHLD    CPRECDONE
+        INX     H
+        SHLD    CPRECDONE
+        MOV     A,L
+        ANI     1FH
+        JNZ     CPRECORD
+        CALL    SHOWFILEPROG
+        JMP     CPRECORD
+CPWRERR:
         MVI     A,1
         STA     OPERROR
+        JMP     CPCLOSE
+CPRDEOF:
+        CALL    SHOWFILEPROG
 CPCLOSE:LXI     D,DSTFCB
         MVI     C,CLOSEF
         CALL    BDOS
@@ -1349,13 +1366,23 @@ SHOWCOPY:
         CALL    PRINTZ
         LDA     CPTOTAL
         CALL    PRINT3
-        MVI     B,12
-        MVI     C,34
-        CALL    POS
-        LXI     H,CPWAIT
-        CALL    PRINTZ
+        CALL    SHOWFILEPROG
         MVI     A,NORMATT
         CALL    SETATTR
+        RET
+
+SHOWFILEPROG:
+        MVI     B,12
+        MVI     C,29
+        CALL    POS
+        LXI     H,CPRECS
+        CALL    PRINTZ
+        LHLD    CPRECDONE
+        CALL    PRINT5
+        MVI     A,'/'
+        CALL    PUTC
+        LHLD    CPTOTREC
+        CALL    PRINT5
         RET
 
 SHOWCPDONE:
@@ -1879,7 +1906,7 @@ CPHEAD: DB      'COPYING FILES',0
 CPFILE: DB      'FILE: ',0
 CPSTEP: DB      'FILE ',0
 CPOF:   DB      ' OF ',0
-CPWAIT: DB      'PLEASE WAIT',0
+CPRECS: DB      'RECORDS ',0
 CPACK:  DB      'PRESS A KEY TO CONTINUE',0
 OVER1:  DB      'Overwrite ',0
 OVER2:  DB      '? (Y/N)',0
@@ -1936,8 +1963,10 @@ KEYTMP: DB      0
 MODROWNO:
         DB      0
 INLEN:  DB      0
-ATTRTMP:DB      0
 LEAD:   DB      0
+SZIDX:  DB      0
+SZLEFT:
+        DB      0
 
 PLIST:  DW      0
 SLIST:  DW      0
@@ -1950,6 +1979,10 @@ DIRPTR: DW      0
 ENTRYPTR:
         DW      0
 INPTR:  DW      0
+CPTOTREC:
+        DW      0
+CPRECDONE:
+        DW      0
 
 SRCHFCB:DS      36
 SRCFCB: DS      36

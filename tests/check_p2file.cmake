@@ -54,6 +54,7 @@ execute_process(
           --wait-for "ASM     .COM     8K"
           ${scroll_down_actions}
           --wait-for "23/ 23 ^"
+          --wait-for "T17     .TST     1K"
           ${scroll_up_actions}
           --wait-for "1/ 23  v"
           --send "\\t"
@@ -88,6 +89,7 @@ execute_process(
           --send "C"
           --wait-for "COPYING FILES"
           --wait-for "FILE   1 OF   2"
+          --wait-for "RECORDS"
           --wait-for "Copy complete."
           --wait-for "TAB PANEL  W/S MOVE"
           --run 10000000
