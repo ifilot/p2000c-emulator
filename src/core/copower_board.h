@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 struct i8088;
 
@@ -60,7 +61,11 @@ class CoPowerBoard {
     std::uint8_t read(std::uint32_t address) const;
     void write(std::uint32_t address, std::uint8_t value);
 
-    std::array<std::uint8_t, kLocalMemorySize> local_ram_{};
+    // Keep the board's 512 KiB RAM off the host call stack. Several machine
+    // instances are deliberately created by the integration tests; embedding
+    // this storage made those tests exceed the 1 MiB default Windows stack.
+    std::vector<std::uint8_t> local_ram_ =
+        std::vector<std::uint8_t>(kLocalMemorySize);
     SharedRead shared_read_;
     SharedWrite shared_write_;
     Z80Interrupt z80_interrupt_;

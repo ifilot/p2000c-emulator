@@ -1223,7 +1223,11 @@ int main(int argc, char* argv[]) {
   fast_boot_poll.setInterval(10);
   QTimer fast_boot_timeout;
   fast_boot_timeout.setSingleShot(true);
-  fast_boot_timeout.setInterval(15000);
+  // The emulator runs in real time while this UI test is pumping its event
+  // loop.  Fifteen seconds is too tight for the slower macOS hosted runners;
+  // allow enough headroom while remaining well below the application's
+  // per-stage fast-boot timeout.
+  fast_boot_timeout.setInterval(30000);
   QObject::connect(&fast_boot_poll, &QTimer::timeout, &fast_boot_wait, [&]() {
     if (window.statusBar()->currentMessage().contains(
             "P2093 CoPower MS-DOS 2.11 ready")) {
